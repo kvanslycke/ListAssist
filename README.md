@@ -9,8 +9,7 @@ system. Ships in phases:
 | 2 | Daily Eisenhower triage — scans notes with `priority:` set, writes `/Daily Priorities/YYYY-MM-DD.md`. Ribbon icon, command, and `obsidian://list-assistant?action=triage` URI. | Shipped |
 | 3 | Google Calendar sync — `due:` becomes an event (Q1 at 16:00 America/Denver on due date; Q2 reminder 3 days before); Plan of the Day `rapids-class` → full time-blocked chain from the Rapids System template. See [docs/GOOGLE-CALENDAR.md](docs/GOOGLE-CALENDAR.md). | Shipped |
 | 4 | Windows Task Scheduler + desktop shortcut to fire the triage + sync URI at midnight and on demand. See [docs/WINDOWS-AUTOMATION.md](docs/WINDOWS-AUTOMATION.md). | Shipped |
-| 5 | Vault auditor — finds untagged notes, broken wikilinks, stubs, orphans, sinks, duplicate candidates, unlinked mentions of existing notes, frequently-mentioned entities without a note, and frequently-appearing URLs without a note. Writes a punch-list report; never edits your notes. See [docs/VAULT-AUDIT.md](docs/VAULT-AUDIT.md). | Shipped |
-| 6 | Semantic vault auditor — sends a compact vault index to Claude via the Anthropic API and asks for cross-domain bridges, thematic patterns, suggested links, and suggested new notes. Opt-in; each run costs money (≈$0.20 at Opus 5, ≈$0.08 at Sonnet 5 for a 100-note vault). See [docs/SEMANTIC-AUDIT.md](docs/SEMANTIC-AUDIT.md). | **Current** |
+| 5 | Vault auditor — finds untagged notes, broken wikilinks, stubs, orphans, sinks, duplicate candidates, unlinked mentions of existing notes, frequently-mentioned entities without a note, and frequently-appearing URLs without a note. Writes a punch-list report; never edits your notes. See [docs/VAULT-AUDIT.md](docs/VAULT-AUDIT.md). | **Current** |
 
 ## Design tenets
 
@@ -117,14 +116,11 @@ src/
   util.ts             Date, slug, substitution helpers
 src/
   audit.ts            Vault auditor: tags, links, stubs, mentions
-  claude-client.ts    Anthropic Messages API wrapper (via requestUrl)
-  semantic-audit.ts   Sends vault index to Claude, parses JSON findings
 docs/
   FRONTMATTER.md      Field schema the plugin recognizes
   GOOGLE-CALENDAR.md  Google Cloud setup for calendar sync
   WINDOWS-AUTOMATION.md  Task Scheduler + desktop shortcut setup
   VAULT-AUDIT.md      What the vault auditor flags and how to tune it
-  SEMANTIC-AUDIT.md   Anthropic API setup, model choice, cost estimates
 windows/
   ListAssistant_Nightly.xml       Task Scheduler task definition
   ListAssistant_TriageAndSync.url On-demand desktop shortcut

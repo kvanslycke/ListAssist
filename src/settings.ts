@@ -27,14 +27,6 @@ export interface ListAssistantSettings {
   auditMinMentionFilesForEntity: number;
   auditMinMentionFilesForUrl: number;
   auditHubExemptTags: string[];
-
-  anthropicApiKey: string;
-  anthropicModel: string;
-  anthropicEffort: "low" | "medium" | "high" | "xhigh" | "max";
-  anthropicMaxTokens: number;
-  anthropicEnableFallbacks: boolean;
-  semanticIncludeAudit: boolean;
-  semanticExcerptChars: number;
 }
 
 export const DEFAULT_SETTINGS: ListAssistantSettings = {
@@ -62,14 +54,6 @@ export const DEFAULT_SETTINGS: ListAssistantSettings = {
   auditMinMentionFilesForEntity: 3,
   auditMinMentionFilesForUrl: 2,
   auditHubExemptTags: ["hub", "index", "moc"],
-
-  anthropicApiKey: "",
-  anthropicModel: "claude-opus-5",
-  anthropicEffort: "high",
-  anthropicMaxTokens: 16000,
-  anthropicEnableFallbacks: true,
-  semanticIncludeAudit: true,
-  semanticExcerptChars: 280,
 };
 
 function parseIntSafe(v: string, fallback: number): number {
@@ -372,112 +356,6 @@ export class ListAssistantSettingTab extends PluginSettingTab {
               .split(",")
               .map((s) => s.trim())
               .filter((s) => s.length > 0);
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    // Semantic audit
-    containerEl.createEl("h3", { text: "Semantic audit (Anthropic API)" });
-    containerEl.createEl("p", {
-      text:
-        "Sends a compact index of your vault to Claude to surface non-obvious semantic connections. See docs/SEMANTIC-AUDIT.md. Each run costs money — the deterministic audit remains free.",
-    });
-
-    new Setting(containerEl)
-      .setName("Anthropic API key")
-      .setDesc("From https://console.anthropic.com/settings/keys. Stored in plugin data (rides Obsidian Sync).")
-      .addText((t) => {
-        t.inputEl.type = "password";
-        t
-          .setValue(this.plugin.settings.anthropicApiKey)
-          .onChange(async (v) => {
-            this.plugin.settings.anthropicApiKey = v.trim();
-            await this.plugin.saveSettings();
-          });
-      });
-
-    new Setting(containerEl)
-      .setName("Model")
-      .setDesc("claude-opus-5 (default): highest quality, ~$0.20/run for a 100-note vault. claude-sonnet-5: ~40% of that cost.")
-      .addDropdown((d) =>
-        d
-          .addOption("claude-opus-5", "claude-opus-5 (recommended)")
-          .addOption("claude-sonnet-5", "claude-sonnet-5 (cheaper)")
-          .addOption("claude-opus-4-8", "claude-opus-4-8")
-          .addOption("claude-haiku-4-5", "claude-haiku-4-5 (cheapest, weaker)")
-          .setValue(this.plugin.settings.anthropicModel)
-          .onChange(async (v) => {
-            this.plugin.settings.anthropicModel = v;
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName("Effort")
-      .setDesc("How hard Claude thinks. high is the recommended default; xhigh/max for the toughest pattern-finding at higher cost.")
-      .addDropdown((d) =>
-        d
-          .addOption("low", "low")
-          .addOption("medium", "medium")
-          .addOption("high", "high (default)")
-          .addOption("xhigh", "xhigh")
-          .addOption("max", "max")
-          .setValue(this.plugin.settings.anthropicEffort)
-          .onChange(async (v) => {
-            this.plugin.settings.anthropicEffort = v as
-              | "low"
-              | "medium"
-              | "high"
-              | "xhigh"
-              | "max";
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName("Max output tokens")
-      .setDesc("Upper bound on the response length. 16000 is the recommended default.")
-      .addText((t) =>
-        t
-          .setValue(String(this.plugin.settings.anthropicMaxTokens))
-          .onChange(async (v) => {
-            this.plugin.settings.anthropicMaxTokens = parseIntSafe(v, 16000);
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName("Note excerpt length (characters)")
-      .setDesc("How much of each note's body is included in the vault index sent to Claude. Larger = more insight, more cost.")
-      .addText((t) =>
-        t
-          .setValue(String(this.plugin.settings.semanticExcerptChars))
-          .onChange(async (v) => {
-            this.plugin.settings.semanticExcerptChars = parseIntSafe(v, 280);
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName("Include deterministic audit in the prompt")
-      .setDesc("Feed the deterministic audit report to Claude so it can skip anything already flagged. Recommended on.")
-      .addToggle((t) =>
-        t
-          .setValue(this.plugin.settings.semanticIncludeAudit)
-          .onChange(async (v) => {
-            this.plugin.settings.semanticIncludeAudit = v;
-            await this.plugin.saveSettings();
-          }),
-      );
-
-    new Setting(containerEl)
-      .setName("Enable server-side refusal fallbacks")
-      .setDesc("Recommended on Opus/Fable models. Lets Anthropic route around a rare safety-refusal on the primary model.")
-      .addToggle((t) =>
-        t
-          .setValue(this.plugin.settings.anthropicEnableFallbacks)
-          .onChange(async (v) => {
-            this.plugin.settings.anthropicEnableFallbacks = v;
             await this.plugin.saveSettings();
           }),
       );

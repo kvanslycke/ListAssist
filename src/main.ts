@@ -11,7 +11,6 @@ import { beginOAuthFlow, OAuthConfig, OAuthTokens } from "./oauth";
 import { CalendarClient } from "./calendar";
 import { syncCalendar } from "./sync";
 import { runAndWrite as runAndWriteAudit } from "./audit";
-import { runSemanticAudit } from "./semantic-audit";
 
 export default class ListAssistantPlugin extends Plugin {
   settings!: ListAssistantSettings;
@@ -59,14 +58,6 @@ export default class ListAssistantPlugin extends Plugin {
       },
     });
 
-    this.addCommand({
-      id: "run-semantic-vault-audit",
-      name: "Run semantic vault audit (uses Anthropic API)",
-      callback: () => {
-        this.runSemanticVaultAudit().catch((err) => this.reportError("Semantic audit", err));
-      },
-    });
-
     this.addRibbonIcon("file-plus", "List Assistant: create from template", () =>
       this.openTemplatePicker(),
     );
@@ -79,16 +70,12 @@ export default class ListAssistantPlugin extends Plugin {
     this.addRibbonIcon("search-check", "List Assistant: run vault audit", () => {
       this.runVaultAudit().catch((err) => this.reportError("Vault audit", err));
     });
-    this.addRibbonIcon("sparkles", "List Assistant: run semantic vault audit (costs API credit)", () => {
-      this.runSemanticVaultAudit().catch((err) => this.reportError("Semantic audit", err));
-    });
 
     this.registerObsidianProtocolHandler("list-assistant", async (params) => {
       try {
         if (params.action === "triage") await this.runTriage();
         else if (params.action === "sync-calendar") await this.syncCalendar();
         else if (params.action === "audit") await this.runVaultAudit();
-        else if (params.action === "semantic-audit") await this.runSemanticVaultAudit();
         else if (params.action === "triage-and-sync") {
           await this.runTriage();
           await this.syncCalendar();
@@ -143,42 +130,6 @@ export default class ListAssistantPlugin extends Plugin {
         new Notice("Connected. (Could not read calendar name.)");
       }
     }
-  }
-
-  async runSemanticVaultAudit(): Promise<void> {
-    if (!this.settings.anthropicApiKey) {
-      new Notice(
-        "Set your Anthropic API key in List Assistant settings before running the semantic audit.",
-      );
-      return;
-    }
-    new Notice("Semantic audit running — this may take 30–90 seconds.");
-    const result = await runSemanticAudit(this.app, {
-      claude: {
-        apiKey: this.settings.anthropicApiKey,
-        model: this.settings.anthropicModel,
-        effort: this.settings.anthropicEffort,
-        maxTokens: this.settings.anthropicMaxTokens,
-        enableFallbacks: this.settings.anthropicEnableFallbacks,
-      },
-      auditOpts: {
-        excludeFolders: this.settings.auditExcludeFolders,
-        stubMaxBytes: this.settings.auditStubMaxBytes,
-        minMentionFilesForEntity: this.settings.auditMinMentionFilesForEntity,
-        minMentionFilesForUrl: this.settings.auditMinMentionFilesForUrl,
-        hubExemptTags: this.settings.auditHubExemptTags,
-      },
-      targetFolder: this.settings.auditFolder,
-      includeDeterministicAudit: this.settings.semanticIncludeAudit,
-      noteExcerptChars: this.settings.semanticExcerptChars,
-    });
-    new Notice(
-      `Semantic audit — ${result.findings.length} findings · ` +
-        `${result.usage.inputTokens} in / ${result.usage.outputTokens} out tokens · ` +
-        `≈ $${result.usage.costUSD.toFixed(4)}`,
-    );
-    const leaf = this.app.workspace.getLeaf(false);
-    await leaf.openFile(result.file);
   }
 
   async runVaultAudit(): Promise<void> {
