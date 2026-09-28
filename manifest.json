@@ -1,0 +1,10 @@
+{
+  "id": "list-assistant",
+  "name": "List Assistant",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Guided note creation from templates, Eisenhower priority triage, and Google Calendar sync.",
+  "author": "Kevin Van Slycke",
+  "authorUrl": "https://github.com/kvanslycke/ListAssist",
+  "isDesktopOnly": false
+}

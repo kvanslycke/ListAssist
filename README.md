@@ -1,1 +1,162 @@
-# ListAssist
+# List Assistant
+
+An Obsidian plugin that helps run a vault as a personal executive-function
+system. Ships in phases:
+
+| Phase | Ships | Status |
+|---|---|---|
+| 1 | Template walkthrough — command + ribbon icon that scans your Templates folder, infers prompts from frontmatter fields and `{{placeholders}}`, and creates the note. | Shipped |
+| 2 | Daily Eisenhower triage — scans notes with `priority:` set, writes `/Daily Priorities/YYYY-MM-DD.md`. Ribbon icon, command, and `obsidian://list-assistant?action=triage` URI. | Shipped |
+| 3 | Google Calendar sync — `due:` becomes an event (Q1 at 16:00 America/Denver on due date; Q2 reminder 3 days before); Plan of the Day `rapids-class` → full time-blocked chain from the Rapids System template. See [docs/GOOGLE-CALENDAR.md](docs/GOOGLE-CALENDAR.md). | Shipped |
+| 4 | Windows Task Scheduler + desktop shortcut to fire the triage + sync URI at midnight and on demand. See [docs/WINDOWS-AUTOMATION.md](docs/WINDOWS-AUTOMATION.md). | Shipped |
+| 5 | Vault auditor — finds untagged notes, broken wikilinks, stubs, orphans, sinks, duplicate candidates, unlinked mentions of existing notes, frequently-mentioned entities without a note, and frequently-appearing URLs without a note. Writes a punch-list report; never edits your notes. See [docs/VAULT-AUDIT.md](docs/VAULT-AUDIT.md). | Shipped |
+
+## Semantic layer — Claude Code, not the plugin
+
+The plugin handles everything deterministic. For meaning-level work
+(semantic pattern-finding, full vault tag-and-link passes, judgment
+calls) the plugin does NOT call an LLM API — that would meter your
+subscription per use.
+
+Instead, [`vault-claude-config/`](vault-claude-config/) contains a
+`.claude/` folder you drop into your vault. When you run `claude`
+from the vault directory, Claude Code picks it up and gets:
+
+- A **vault primer** (`CLAUDE.md`) — vault structure, frontmatter
+  contract, ground rules ("never write `priority:`", "use the tag
+  taxonomy in Tags.md", etc.).
+- **Three slash commands:**
+  - `/vault-audit` — semantic audit (cross-domain bridges, thematic
+    patterns, suggested links, suggested new notes). Read-only.
+  - `/vault-tag-pass` — full sweep like the one that already worked
+    on your vault: adds missing tags/links, fixes broken wikilinks,
+    respects your taxonomy, never writes `priority`.
+  - `/frontmatter-check` — verifies actionable notes carry the
+    plugin's frontmatter contract. Read-only.
+
+Runs against your existing Claude subscription, not per-token API
+billing. Install steps: [`vault-claude-config/README.md`](vault-claude-config/README.md).
+
+## Design tenets
+
+- **Mobile-safe.** One codebase, runs on Surface Pro and Android via Obsidian
+  Mobile. No Node APIs, no `fs`, no `child_process`.
+- **You own priorities.** The plugin never writes or edits any `priority:`
+  field. It reads them for triage and calendar sync; you set them.
+- **Vault is source of truth.** All state lives in markdown files. Obsidian
+  Sync handles cross-device propagation.
+
+## Frontmatter contract
+
+See [`docs/FRONTMATTER.md`](docs/FRONTMATTER.md) for the fields the plugin
+recognizes and how each is treated.
+
+## Install (dev)
+
+Requires [Git](https://git-scm.com/download/win) and
+[Node.js](https://nodejs.org) (LTS) on PATH.
+
+### Windows (Surface Pro)
+
+Clone, check out the current feature branch, install and build:
+
+```cmd
+cd C:\Users\kevin
+git clone https://github.com/kvanslycke/ListAssist.git
+cd ListAssist
+git checkout claude/blissful-keller-dxphie
+npm install
+npm run build
+```
+
+Copy the built plugin into the vault (adjust the vault path if yours
+differs):
+
+```cmd
+mkdir "C:\Users\kevin\KevinsRoots\Obsidian Vault\KevlarMainVault\.obsidian\plugins\list-assistant"
+copy manifest.json "C:\Users\kevin\KevinsRoots\Obsidian Vault\KevlarMainVault\.obsidian\plugins\list-assistant\"
+copy main.js "C:\Users\kevin\KevinsRoots\Obsidian Vault\KevlarMainVault\.obsidian\plugins\list-assistant\"
+```
+
+In Obsidian: **Settings → Community plugins**, disable Restricted mode
+if needed, reload plugins, find **List Assistant** and toggle it on.
+Obsidian Sync propagates the plugin folder to the Android app
+automatically.
+
+### macOS / Linux
+
+```bash
+git clone https://github.com/kvanslycke/ListAssist.git
+cd ListAssist
+git checkout claude/blissful-keller-dxphie
+npm install
+npm run build
+cp manifest.json main.js "$VAULT/.obsidian/plugins/list-assistant/"
+```
+
+### Live-reloading during development
+
+```
+npm run dev
+```
+
+## Commands
+
+- **List Assistant: Create note from template** — command palette entry
+  and file-plus ribbon icon.
+- **List Assistant: Run daily triage** — command palette entry and
+  list-checks ribbon icon. Scans all notes with a `priority:` frontmatter
+  key, groups them by Eisenhower quadrant, and writes the report to
+  `Daily Priorities/YYYY-MM-DD.md`. Also invocable via
+  `obsidian://list-assistant?action=triage`.
+- **List Assistant: Connect Google Calendar** — one-time OAuth flow
+  (desktop only). See [docs/GOOGLE-CALENDAR.md](docs/GOOGLE-CALENDAR.md)
+  for the Google Cloud setup steps.
+- **List Assistant: Sync Google Calendar** — creates/updates events for
+  every note with `priority: q1` or `priority: q2` **and** a
+  `due: YYYY-MM-DD` field. Q3/Q4 never touch the calendar. Plan of the
+  Day notes with `rapids-class` set get the full time-blocked event
+  chain for that day, generated from the Rapids System template. The
+  calendar-sync ribbon icon runs the same. Also invocable via
+  `obsidian://list-assistant?action=sync-calendar` and
+  `obsidian://list-assistant?action=triage-and-sync` (used by Phase 4).
+
+## Repo layout
+
+```
+manifest.json         Obsidian plugin manifest
+package.json          npm deps and scripts
+tsconfig.json         TypeScript config
+esbuild.config.mjs    Bundler
+src/
+  main.ts             Plugin entry, commands, ribbon, URI handler
+  settings.ts         Settings tab
+  template-parser.ts  YAML frontmatter + placeholder inference
+  template-picker.ts  Fuzzy-suggest for template selection
+  create-note-modal.ts Fill-in modal
+  triage.ts           Vault scan, bucketing, report renderer
+  oauth.ts            Google OAuth 2.0 (loopback, PKCE, desktop-only)
+  calendar.ts         Google Calendar API client
+  sync.ts             Note → event spec builder + orchestrator
+  rapids.ts           Rapids System template parser
+  util.ts             Date, slug, substitution helpers
+src/
+  audit.ts            Vault auditor: tags, links, stubs, mentions
+docs/
+  FRONTMATTER.md      Field schema the plugin recognizes
+  GOOGLE-CALENDAR.md  Google Cloud setup for calendar sync
+  WINDOWS-AUTOMATION.md  Task Scheduler + desktop shortcut setup
+  VAULT-AUDIT.md      What the vault auditor flags and how to tune it
+windows/
+  ListAssistant_Nightly.xml       Task Scheduler task definition
+  ListAssistant_TriageAndSync.url On-demand desktop shortcut
+  install.ps1                     One-command installer for both
+vault-claude-config/
+  README.md           How to install into the vault
+  .claude/
+    CLAUDE.md         Vault primer Claude Code reads at session start
+    commands/
+      vault-audit.md         /vault-audit slash command
+      vault-tag-pass.md      /vault-tag-pass slash command
+      frontmatter-check.md   /frontmatter-check slash command
+```
