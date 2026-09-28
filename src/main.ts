@@ -7,6 +7,9 @@ import {
   ListAssistantSettingTab,
 } from "./settings";
 import { runTriage } from "./triage";
+import { beginOAuthFlow, OAuthConfig, OAuthTokens } from "./oauth";
+import { CalendarClient } from "./calendar";
+import { syncCalendar } from "./sync";
 
 export default class ListAssistantPlugin extends Plugin {
   settings!: ListAssistantSettings;
@@ -28,21 +31,44 @@ export default class ListAssistantPlugin extends Plugin {
       },
     });
 
-    this.addRibbonIcon("file-plus", "List Assistant: create from template", () => {
-      this.openTemplatePicker();
+    this.addCommand({
+      id: "sync-google-calendar",
+      name: "Sync Google Calendar",
+      callback: () => {
+        this.syncCalendar().catch((err) => this.reportError("Calendar sync", err));
+      },
     });
 
+    this.addCommand({
+      id: "connect-google-calendar",
+      name: "Connect Google Calendar",
+      callback: () => {
+        this.connectGoogleCalendar().catch((err) =>
+          this.reportError("Calendar connect", err),
+        );
+      },
+    });
+
+    this.addRibbonIcon("file-plus", "List Assistant: create from template", () =>
+      this.openTemplatePicker(),
+    );
     this.addRibbonIcon("list-checks", "List Assistant: run daily triage", () => {
       this.runTriage().catch((err) => this.reportError("Triage", err));
     });
+    this.addRibbonIcon("calendar-sync", "List Assistant: sync Google Calendar", () => {
+      this.syncCalendar().catch((err) => this.reportError("Calendar sync", err));
+    });
 
     this.registerObsidianProtocolHandler("list-assistant", async (params) => {
-      if (params.action === "triage") {
-        try {
+      try {
+        if (params.action === "triage") await this.runTriage();
+        else if (params.action === "sync-calendar") await this.syncCalendar();
+        else if (params.action === "triage-and-sync") {
           await this.runTriage();
-        } catch (err) {
-          this.reportError("Triage (URI)", err);
+          await this.syncCalendar();
         }
+      } catch (err) {
+        this.reportError(`URI ${params.action}`, err);
       }
     });
 
@@ -59,6 +85,87 @@ export default class ListAssistantPlugin extends Plugin {
     await this.saveData(this.settings);
   }
 
+  async runTriage(): Promise<void> {
+    const result = await runTriage(this.app, {
+      excludeFolders: this.settings.triageExcludeFolders,
+      targetFolder: this.settings.dailyPrioritiesFolder,
+    });
+    const c = result.report.buckets;
+    new Notice(
+      `Triage — ${result.today}\nQ1 ${c.q1.length} · Q2 ${c.q2.length} · Q3 ${c.q3.length} · Q4 ${c.q4.length} · needs ${result.report.untriaged.length}`,
+    );
+    const leaf = this.app.workspace.getLeaf(false);
+    await leaf.openFile(result.file);
+  }
+
+  async connectGoogleCalendar(): Promise<void> {
+    const config = this.oauthConfig();
+    if (!config) return;
+    const tokens = await beginOAuthFlow(config);
+    this.settings.googleTokens = tokens;
+    await this.saveSettings();
+    const client = this.buildClient(tokens);
+    if (client) {
+      try {
+        const name = await client.whoAmI();
+        new Notice(`Connected to calendar: ${name}`);
+      } catch {
+        new Notice("Connected. (Could not read calendar name.)");
+      }
+    }
+  }
+
+  async syncCalendar(): Promise<void> {
+    const config = this.oauthConfig();
+    if (!config) return;
+    if (!this.settings.googleTokens) {
+      new Notice("Google Calendar not connected. Open List Assistant settings to connect.");
+      return;
+    }
+    const client = this.buildClient(this.settings.googleTokens);
+    if (!client) return;
+    const summary = await syncCalendar(this.app, client, {
+      q1StartHour: this.settings.q1StartHour,
+      q1StartMinute: this.settings.q1StartMinute,
+      q1EndHour: this.settings.q1EndHour,
+      q1EndMinute: this.settings.q1EndMinute,
+      q2ReminderDays: this.settings.q2ReminderDays,
+      rapidsTemplatePath: this.settings.rapidsTemplatePath,
+      excludeFolders: this.settings.triageExcludeFolders,
+    });
+    const errPart = summary.errors.length ? `\n${summary.errors.length} errors (see console)` : "";
+    if (summary.errors.length) {
+      for (const e of summary.errors) console.error("List Assistant calendar sync:", e);
+    }
+    new Notice(
+      `Calendar sync\n+${summary.created} created · ${summary.updated} updated${errPart}`,
+    );
+  }
+
+  private oauthConfig(): OAuthConfig | null {
+    const { googleClientId, googleClientSecret, oauthRedirectPort } = this.settings;
+    if (!googleClientId || !googleClientSecret) {
+      new Notice(
+        "Set Google OAuth client ID and secret in List Assistant settings before connecting.",
+      );
+      return null;
+    }
+    return {
+      clientId: googleClientId,
+      clientSecret: googleClientSecret,
+      redirectPort: oauthRedirectPort,
+    };
+  }
+
+  private buildClient(tokens: OAuthTokens): CalendarClient | null {
+    const config = this.oauthConfig();
+    if (!config) return null;
+    return new CalendarClient(config, tokens, this.settings.googleCalendarId, async (t) => {
+      this.settings.googleTokens = t;
+      await this.saveSettings();
+    });
+  }
+
   private openTemplatePicker(): void {
     const templates = this.getTemplateFiles();
     if (templates.length === 0) {
@@ -71,18 +178,6 @@ export default class ListAssistantPlugin extends Plugin {
       const raw = await this.app.vault.read(tpl);
       new CreateNoteModal(this.app, this, tpl, raw).open();
     }).open();
-  }
-
-  async runTriage(): Promise<void> {
-    const result = await runTriage(this.app, {
-      excludeFolders: this.settings.triageExcludeFolders,
-      targetFolder: this.settings.dailyPrioritiesFolder,
-    });
-    const counts = result.report.buckets;
-    const summary = `Q1 ${counts.q1.length} · Q2 ${counts.q2.length} · Q3 ${counts.q3.length} · Q4 ${counts.q4.length} · triage ${result.report.untriaged.length}`;
-    new Notice(`Daily Priorities — ${result.today}\n${summary}`);
-    const leaf = this.app.workspace.getLeaf(false);
-    await leaf.openFile(result.file);
   }
 
   private reportError(context: string, err: unknown): void {

@@ -6,9 +6,9 @@ system. Ships in phases:
 | Phase | Ships | Status |
 |---|---|---|
 | 1 | Template walkthrough — command + ribbon icon that scans your Templates folder, infers prompts from frontmatter fields and `{{placeholders}}`, and creates the note. | Shipped |
-| 2 | Daily Eisenhower triage — scans notes with `priority:` set, writes `/Daily Priorities/YYYY-MM-DD.md`. Ribbon icon, command, and `obsidian://list-assistant?action=triage` URI. | **Current** |
-| 3 | Google Calendar sync — `due:` becomes an event (Q1 at 16:00 America/Denver on due date; Q2 reminder 3 days before); Plan of the Day `rapids-class` → full time-blocked chain. | Next |
-| 4 | Windows Task Scheduler + desktop shortcut to fire the triage URI at midnight and on demand. | Last |
+| 2 | Daily Eisenhower triage — scans notes with `priority:` set, writes `/Daily Priorities/YYYY-MM-DD.md`. Ribbon icon, command, and `obsidian://list-assistant?action=triage` URI. | Shipped |
+| 3 | Google Calendar sync — `due:` becomes an event (Q1 at 16:00 America/Denver on due date; Q2 reminder 3 days before); Plan of the Day `rapids-class` → full time-blocked chain from the Rapids System template. See [docs/GOOGLE-CALENDAR.md](docs/GOOGLE-CALENDAR.md). | **Current** |
+| 4 | Windows Task Scheduler + desktop shortcut to fire the triage + sync URI at midnight and on demand. | Last |
 
 ## Design tenets
 
@@ -81,8 +81,18 @@ npm run dev
   list-checks ribbon icon. Scans all notes with a `priority:` frontmatter
   key, groups them by Eisenhower quadrant, and writes the report to
   `Daily Priorities/YYYY-MM-DD.md`. Also invocable via
-  `obsidian://list-assistant?action=triage` (Phase 4 uses this to fire
-  triage from a Windows Task Scheduler entry).
+  `obsidian://list-assistant?action=triage`.
+- **List Assistant: Connect Google Calendar** — one-time OAuth flow
+  (desktop only). See [docs/GOOGLE-CALENDAR.md](docs/GOOGLE-CALENDAR.md)
+  for the Google Cloud setup steps.
+- **List Assistant: Sync Google Calendar** — creates/updates events for
+  every note with `priority: q1` or `priority: q2` **and** a
+  `due: YYYY-MM-DD` field. Q3/Q4 never touch the calendar. Plan of the
+  Day notes with `rapids-class` set get the full time-blocked event
+  chain for that day, generated from the Rapids System template. The
+  calendar-sync ribbon icon runs the same. Also invocable via
+  `obsidian://list-assistant?action=sync-calendar` and
+  `obsidian://list-assistant?action=triage-and-sync` (used by Phase 4).
 
 ## Repo layout
 
@@ -98,7 +108,12 @@ src/
   template-picker.ts  Fuzzy-suggest for template selection
   create-note-modal.ts Fill-in modal
   triage.ts           Vault scan, bucketing, report renderer
+  oauth.ts            Google OAuth 2.0 (loopback, PKCE, desktop-only)
+  calendar.ts         Google Calendar API client
+  sync.ts             Note → event spec builder + orchestrator
+  rapids.ts           Rapids System template parser
   util.ts             Date, slug, substitution helpers
 docs/
   FRONTMATTER.md      Field schema the plugin recognizes
+  GOOGLE-CALENDAR.md  Google Cloud setup for calendar sync
 ```
