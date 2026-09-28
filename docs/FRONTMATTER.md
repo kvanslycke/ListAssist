@@ -14,10 +14,17 @@ priority: q1 | q2 | q3 | q4
 - `q2` — Not Urgent, Important (schedule).
 - `q3` — Urgent, Not Important (delegate/batch).
 - `q4` — Neither (question these).
-- Empty or missing — untriaged; appears in the "Needs triage" section of
-  the daily report so you can set it.
+- Field present but empty — untriaged; appears in the "Needs triage"
+  section of the daily report so you can set it.
+- Field absent — the note isn't scanned at all. Add the field to
+  actionable notes; leave it off reference notes.
 
 The plugin never writes this field. Ever. You set it.
+
+The plugin also accepts the legacy `Priority Level:` key (e.g. as it
+appears on the Grocery List template) with values starting with `1`,
+`2`, `3`, or `4` — they map to `q1`–`q4`. New templates should use
+`priority:` for consistency.
 
 Only put this field on notes you'll need to act on — Project, Grocery,
 Inventory, List, To-Do, Trip Packing when active. Reference notes,
@@ -47,7 +54,8 @@ priority for — priority stays yours.
 status: not-started | doing | done
 ```
 
-- `done` — excluded from the triage report and from calendar sync.
+- `done`, `completed`, `complete`, `cancelled`, `canceled` — excluded
+  from the triage report and from calendar sync.
 - Any other value or missing — considered active.
 
 ## Auto-managed placeholders

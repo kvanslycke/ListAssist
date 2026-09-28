@@ -6,6 +6,7 @@ import {
   ListAssistantSettings,
   ListAssistantSettingTab,
 } from "./settings";
+import { runTriage } from "./triage";
 
 export default class ListAssistantPlugin extends Plugin {
   settings!: ListAssistantSettings;
@@ -19,8 +20,30 @@ export default class ListAssistantPlugin extends Plugin {
       callback: () => this.openTemplatePicker(),
     });
 
+    this.addCommand({
+      id: "run-daily-triage",
+      name: "Run daily triage",
+      callback: () => {
+        this.runTriage().catch((err) => this.reportError("Triage", err));
+      },
+    });
+
     this.addRibbonIcon("file-plus", "List Assistant: create from template", () => {
       this.openTemplatePicker();
+    });
+
+    this.addRibbonIcon("list-checks", "List Assistant: run daily triage", () => {
+      this.runTriage().catch((err) => this.reportError("Triage", err));
+    });
+
+    this.registerObsidianProtocolHandler("list-assistant", async (params) => {
+      if (params.action === "triage") {
+        try {
+          await this.runTriage();
+        } catch (err) {
+          this.reportError("Triage (URI)", err);
+        }
+      }
     });
 
     this.addSettingTab(new ListAssistantSettingTab(this.app, this));
@@ -48,6 +71,24 @@ export default class ListAssistantPlugin extends Plugin {
       const raw = await this.app.vault.read(tpl);
       new CreateNoteModal(this.app, this, tpl, raw).open();
     }).open();
+  }
+
+  async runTriage(): Promise<void> {
+    const result = await runTriage(this.app, {
+      excludeFolders: this.settings.triageExcludeFolders,
+      targetFolder: this.settings.dailyPrioritiesFolder,
+    });
+    const counts = result.report.buckets;
+    const summary = `Q1 ${counts.q1.length} · Q2 ${counts.q2.length} · Q3 ${counts.q3.length} · Q4 ${counts.q4.length} · triage ${result.report.untriaged.length}`;
+    new Notice(`Daily Priorities — ${result.today}\n${summary}`);
+    const leaf = this.app.workspace.getLeaf(false);
+    await leaf.openFile(result.file);
+  }
+
+  private reportError(context: string, err: unknown): void {
+    console.error(`List Assistant: ${context} failed`, err);
+    const msg = err instanceof Error ? err.message : String(err);
+    new Notice(`${context} failed: ${msg}`);
   }
 
   private getTemplateFiles(): TFile[] {

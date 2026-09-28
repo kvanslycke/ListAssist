@@ -5,10 +5,10 @@ system. Ships in phases:
 
 | Phase | Ships | Status |
 |---|---|---|
-| 1 | Template walkthrough — command + ribbon icon that scans your Templates folder, infers prompts from frontmatter fields and `{{placeholders}}`, and creates the note. | **Current** |
-| 2 | Daily Eisenhower triage — scans notes with `priority:` set, writes `/Daily Priorities/YYYY-MM-DD.md`. | Next |
-| 3 | Google Calendar sync — `due:` becomes an event (Q1 at 16:00 America/Denver on due date; Q2 reminder 3 days before); Plan of the Day `rapids-class` → full time-blocked chain. | After |
-| 4 | Windows Task Scheduler + desktop shortcut to fire triage at midnight and on demand. | Last |
+| 1 | Template walkthrough — command + ribbon icon that scans your Templates folder, infers prompts from frontmatter fields and `{{placeholders}}`, and creates the note. | Shipped |
+| 2 | Daily Eisenhower triage — scans notes with `priority:` set, writes `/Daily Priorities/YYYY-MM-DD.md`. Ribbon icon, command, and `obsidian://list-assistant?action=triage` URI. | **Current** |
+| 3 | Google Calendar sync — `due:` becomes an event (Q1 at 16:00 America/Denver on due date; Q2 reminder 3 days before); Plan of the Day `rapids-class` → full time-blocked chain. | Next |
+| 4 | Windows Task Scheduler + desktop shortcut to fire the triage URI at midnight and on demand. | Last |
 
 ## Design tenets
 
@@ -75,8 +75,14 @@ npm run dev
 
 ## Commands
 
-- **List Assistant: Create note from template** — command palette entry,
-  also available as the file-plus ribbon icon.
+- **List Assistant: Create note from template** — command palette entry
+  and file-plus ribbon icon.
+- **List Assistant: Run daily triage** — command palette entry and
+  list-checks ribbon icon. Scans all notes with a `priority:` frontmatter
+  key, groups them by Eisenhower quadrant, and writes the report to
+  `Daily Priorities/YYYY-MM-DD.md`. Also invocable via
+  `obsidian://list-assistant?action=triage` (Phase 4 uses this to fire
+  triage from a Windows Task Scheduler entry).
 
 ## Repo layout
 
@@ -86,11 +92,12 @@ package.json          npm deps and scripts
 tsconfig.json         TypeScript config
 esbuild.config.mjs    Bundler
 src/
-  main.ts             Plugin entry, commands, ribbon
+  main.ts             Plugin entry, commands, ribbon, URI handler
   settings.ts         Settings tab
   template-parser.ts  YAML frontmatter + placeholder inference
   template-picker.ts  Fuzzy-suggest for template selection
   create-note-modal.ts Fill-in modal
+  triage.ts           Vault scan, bucketing, report renderer
   util.ts             Date, slug, substitution helpers
 docs/
   FRONTMATTER.md      Field schema the plugin recognizes
