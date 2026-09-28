@@ -10,6 +10,7 @@ import { runTriage } from "./triage";
 import { beginOAuthFlow, OAuthConfig, OAuthTokens } from "./oauth";
 import { CalendarClient } from "./calendar";
 import { syncCalendar } from "./sync";
+import { runAndWrite as runAndWriteAudit } from "./audit";
 
 export default class ListAssistantPlugin extends Plugin {
   settings!: ListAssistantSettings;
@@ -49,6 +50,14 @@ export default class ListAssistantPlugin extends Plugin {
       },
     });
 
+    this.addCommand({
+      id: "run-vault-audit",
+      name: "Run vault audit",
+      callback: () => {
+        this.runVaultAudit().catch((err) => this.reportError("Vault audit", err));
+      },
+    });
+
     this.addRibbonIcon("file-plus", "List Assistant: create from template", () =>
       this.openTemplatePicker(),
     );
@@ -58,14 +67,22 @@ export default class ListAssistantPlugin extends Plugin {
     this.addRibbonIcon("calendar-sync", "List Assistant: sync Google Calendar", () => {
       this.syncCalendar().catch((err) => this.reportError("Calendar sync", err));
     });
+    this.addRibbonIcon("search-check", "List Assistant: run vault audit", () => {
+      this.runVaultAudit().catch((err) => this.reportError("Vault audit", err));
+    });
 
     this.registerObsidianProtocolHandler("list-assistant", async (params) => {
       try {
         if (params.action === "triage") await this.runTriage();
         else if (params.action === "sync-calendar") await this.syncCalendar();
+        else if (params.action === "audit") await this.runVaultAudit();
         else if (params.action === "triage-and-sync") {
           await this.runTriage();
           await this.syncCalendar();
+        } else if (params.action === "triage-sync-audit") {
+          await this.runTriage();
+          await this.syncCalendar();
+          await this.runVaultAudit();
         }
       } catch (err) {
         this.reportError(`URI ${params.action}`, err);
@@ -113,6 +130,26 @@ export default class ListAssistantPlugin extends Plugin {
         new Notice("Connected. (Could not read calendar name.)");
       }
     }
+  }
+
+  async runVaultAudit(): Promise<void> {
+    const result = await runAndWriteAudit(this.app, {
+      excludeFolders: this.settings.auditExcludeFolders,
+      stubMaxBytes: this.settings.auditStubMaxBytes,
+      minMentionFilesForEntity: this.settings.auditMinMentionFilesForEntity,
+      minMentionFilesForUrl: this.settings.auditMinMentionFilesForUrl,
+      hubExemptTags: this.settings.auditHubExemptTags,
+      targetFolder: this.settings.auditFolder,
+    });
+    const f = result.findings;
+    new Notice(
+      `Vault audit — ${result.today}\n` +
+        `${f.scannedCount} scanned · ${f.untagged.length} untagged · ${f.brokenLinks.length} broken · ` +
+        `${f.orphans.length} orphans · ${f.stubs.length} stubs · ${f.unlinkedMentions.length} mention-targets · ` +
+        `${f.entitiesWithoutNote.length} missing entities · ${f.urlsWithoutNote.length} missing URLs`,
+    );
+    const leaf = this.app.workspace.getLeaf(false);
+    await leaf.openFile(result.file);
   }
 
   async syncCalendar(): Promise<void> {

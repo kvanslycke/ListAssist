@@ -8,7 +8,8 @@ system. Ships in phases:
 | 1 | Template walkthrough — command + ribbon icon that scans your Templates folder, infers prompts from frontmatter fields and `{{placeholders}}`, and creates the note. | Shipped |
 | 2 | Daily Eisenhower triage — scans notes with `priority:` set, writes `/Daily Priorities/YYYY-MM-DD.md`. Ribbon icon, command, and `obsidian://list-assistant?action=triage` URI. | Shipped |
 | 3 | Google Calendar sync — `due:` becomes an event (Q1 at 16:00 America/Denver on due date; Q2 reminder 3 days before); Plan of the Day `rapids-class` → full time-blocked chain from the Rapids System template. See [docs/GOOGLE-CALENDAR.md](docs/GOOGLE-CALENDAR.md). | Shipped |
-| 4 | Windows Task Scheduler + desktop shortcut to fire the triage + sync URI at midnight and on demand. See [docs/WINDOWS-AUTOMATION.md](docs/WINDOWS-AUTOMATION.md). | **Current** |
+| 4 | Windows Task Scheduler + desktop shortcut to fire the triage + sync URI at midnight and on demand. See [docs/WINDOWS-AUTOMATION.md](docs/WINDOWS-AUTOMATION.md). | Shipped |
+| 5 | Vault auditor — finds untagged notes, broken wikilinks, stubs, orphans, sinks, duplicate candidates, unlinked mentions of existing notes, frequently-mentioned entities without a note, and frequently-appearing URLs without a note. Writes a punch-list report; never edits your notes. See [docs/VAULT-AUDIT.md](docs/VAULT-AUDIT.md). | **Current** |
 
 ## Design tenets
 
@@ -113,10 +114,13 @@ src/
   sync.ts             Note → event spec builder + orchestrator
   rapids.ts           Rapids System template parser
   util.ts             Date, slug, substitution helpers
+src/
+  audit.ts            Vault auditor: tags, links, stubs, mentions
 docs/
   FRONTMATTER.md      Field schema the plugin recognizes
   GOOGLE-CALENDAR.md  Google Cloud setup for calendar sync
   WINDOWS-AUTOMATION.md  Task Scheduler + desktop shortcut setup
+  VAULT-AUDIT.md      What the vault auditor flags and how to tune it
 windows/
   ListAssistant_Nightly.xml       Task Scheduler task definition
   ListAssistant_TriageAndSync.url On-demand desktop shortcut

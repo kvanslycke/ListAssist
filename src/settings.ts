@@ -20,6 +20,13 @@ export interface ListAssistantSettings {
   q1EndMinute: number;
   q2ReminderDays: number;
   rapidsTemplatePath: string;
+
+  auditFolder: string;
+  auditExcludeFolders: string[];
+  auditStubMaxBytes: number;
+  auditMinMentionFilesForEntity: number;
+  auditMinMentionFilesForUrl: number;
+  auditHubExemptTags: string[];
 }
 
 export const DEFAULT_SETTINGS: ListAssistantSettings = {
@@ -40,6 +47,13 @@ export const DEFAULT_SETTINGS: ListAssistantSettings = {
   q1EndMinute: 0,
   q2ReminderDays: 3,
   rapidsTemplatePath: "Templates/Rapids_System_Template.md",
+
+  auditFolder: "Vault Audits",
+  auditExcludeFolders: ["Templates", "Daily Priorities", "Vault Audits"],
+  auditStubMaxBytes: 400,
+  auditMinMentionFilesForEntity: 3,
+  auditMinMentionFilesForUrl: 2,
+  auditHubExemptTags: ["hub", "index", "moc"],
 };
 
 function parseIntSafe(v: string, fallback: number): number {
@@ -259,6 +273,89 @@ export class ListAssistantSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.rapidsTemplatePath)
           .onChange(async (v) => {
             this.plugin.settings.rapidsTemplatePath = v.trim();
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    // Vault audit
+    containerEl.createEl("h3", { text: "Vault audit" });
+    new Setting(containerEl)
+      .setName("Audit reports folder")
+      .setDesc("Where audit reports are written. One file per day.")
+      .addText((t) =>
+        t
+          .setPlaceholder("Vault Audits")
+          .setValue(this.plugin.settings.auditFolder)
+          .onChange(async (v) => {
+            this.plugin.settings.auditFolder = v.trim() || "Vault Audits";
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Audit exclude folders")
+      .setDesc("Comma-separated folders skipped by the auditor.")
+      .addText((t) =>
+        t
+          .setPlaceholder("Templates, Daily Priorities, Vault Audits")
+          .setValue(this.plugin.settings.auditExcludeFolders.join(", "))
+          .onChange(async (v) => {
+            this.plugin.settings.auditExcludeFolders = v
+              .split(",")
+              .map((s) => s.trim())
+              .filter((s) => s.length > 0);
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Stub threshold (bytes)")
+      .setDesc("Files at or below this size (or with body under 30 chars) are flagged as stubs.")
+      .addText((t) =>
+        t
+          .setValue(String(this.plugin.settings.auditStubMaxBytes))
+          .onChange(async (v) => {
+            this.plugin.settings.auditStubMaxBytes = parseIntSafe(v, 400);
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Entity minimum mentions")
+      .setDesc("A capitalized name must appear in at least this many notes to be flagged as missing.")
+      .addText((t) =>
+        t
+          .setValue(String(this.plugin.settings.auditMinMentionFilesForEntity))
+          .onChange(async (v) => {
+            this.plugin.settings.auditMinMentionFilesForEntity = parseIntSafe(v, 3);
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("URL minimum mentions")
+      .setDesc("A hostname must appear in at least this many notes to be flagged as missing.")
+      .addText((t) =>
+        t
+          .setValue(String(this.plugin.settings.auditMinMentionFilesForUrl))
+          .onChange(async (v) => {
+            this.plugin.settings.auditMinMentionFilesForUrl = parseIntSafe(v, 2);
+            await this.plugin.saveSettings();
+          }),
+      );
+
+    new Setting(containerEl)
+      .setName("Hub exempt tags")
+      .setDesc("Notes with any of these tags are exempt from the sinks list (typically hub index notes).")
+      .addText((t) =>
+        t
+          .setPlaceholder("hub, index, moc")
+          .setValue(this.plugin.settings.auditHubExemptTags.join(", "))
+          .onChange(async (v) => {
+            this.plugin.settings.auditHubExemptTags = v
+              .split(",")
+              .map((s) => s.trim())
+              .filter((s) => s.length > 0);
             await this.plugin.saveSettings();
           }),
       );
