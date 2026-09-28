@@ -26,28 +26,50 @@ recognizes and how each is treated.
 
 ## Install (dev)
 
-Requires Node 18+ and npm.
+Requires [Git](https://git-scm.com/download/win) and
+[Node.js](https://nodejs.org) (LTS) on PATH.
 
-```bash
+### Windows (Surface Pro)
+
+Clone, check out the current feature branch, install and build:
+
+```cmd
+cd C:\Users\kevin
+git clone https://github.com/kvanslycke/ListAssist.git
+cd ListAssist
+git checkout claude/blissful-keller-dxphie
 npm install
 npm run build
 ```
 
-That writes `main.js` next to `manifest.json`. Then, in your vault:
+Copy the built plugin into the vault (adjust the vault path if yours
+differs):
 
+```cmd
+mkdir "C:\Users\kevin\KevinsRoots\Obsidian Vault\KevlarMainVault\.obsidian\plugins\list-assistant"
+copy manifest.json "C:\Users\kevin\KevinsRoots\Obsidian Vault\KevlarMainVault\.obsidian\plugins\list-assistant\"
+copy main.js "C:\Users\kevin\KevinsRoots\Obsidian Vault\KevlarMainVault\.obsidian\plugins\list-assistant\"
 ```
-[vault]/.obsidian/plugins/list-assistant/
-    manifest.json
-    main.js
-```
 
-Copy those two files there. In Obsidian → Settings → Community plugins,
-enable **List Assistant**. Obsidian Sync propagates the plugin to your
-other devices automatically once installed.
+In Obsidian: **Settings → Community plugins**, disable Restricted mode
+if needed, reload plugins, find **List Assistant** and toggle it on.
+Obsidian Sync propagates the plugin folder to the Android app
+automatically.
 
-For live-reloading during development:
+### macOS / Linux
 
 ```bash
+git clone https://github.com/kvanslycke/ListAssist.git
+cd ListAssist
+git checkout claude/blissful-keller-dxphie
+npm install
+npm run build
+cp manifest.json main.js "$VAULT/.obsidian/plugins/list-assistant/"
+```
+
+### Live-reloading during development
+
+```
 npm run dev
 ```
 
