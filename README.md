@@ -9,7 +9,33 @@ system. Ships in phases:
 | 2 | Daily Eisenhower triage — scans notes with `priority:` set, writes `/Daily Priorities/YYYY-MM-DD.md`. Ribbon icon, command, and `obsidian://list-assistant?action=triage` URI. | Shipped |
 | 3 | Google Calendar sync — `due:` becomes an event (Q1 at 16:00 America/Denver on due date; Q2 reminder 3 days before); Plan of the Day `rapids-class` → full time-blocked chain from the Rapids System template. See [docs/GOOGLE-CALENDAR.md](docs/GOOGLE-CALENDAR.md). | Shipped |
 | 4 | Windows Task Scheduler + desktop shortcut to fire the triage + sync URI at midnight and on demand. See [docs/WINDOWS-AUTOMATION.md](docs/WINDOWS-AUTOMATION.md). | Shipped |
-| 5 | Vault auditor — finds untagged notes, broken wikilinks, stubs, orphans, sinks, duplicate candidates, unlinked mentions of existing notes, frequently-mentioned entities without a note, and frequently-appearing URLs without a note. Writes a punch-list report; never edits your notes. See [docs/VAULT-AUDIT.md](docs/VAULT-AUDIT.md). | **Current** |
+| 5 | Vault auditor — finds untagged notes, broken wikilinks, stubs, orphans, sinks, duplicate candidates, unlinked mentions of existing notes, frequently-mentioned entities without a note, and frequently-appearing URLs without a note. Writes a punch-list report; never edits your notes. See [docs/VAULT-AUDIT.md](docs/VAULT-AUDIT.md). | Shipped |
+
+## Semantic layer — Claude Code, not the plugin
+
+The plugin handles everything deterministic. For meaning-level work
+(semantic pattern-finding, full vault tag-and-link passes, judgment
+calls) the plugin does NOT call an LLM API — that would meter your
+subscription per use.
+
+Instead, [`vault-claude-config/`](vault-claude-config/) contains a
+`.claude/` folder you drop into your vault. When you run `claude`
+from the vault directory, Claude Code picks it up and gets:
+
+- A **vault primer** (`CLAUDE.md`) — vault structure, frontmatter
+  contract, ground rules ("never write `priority:`", "use the tag
+  taxonomy in Tags.md", etc.).
+- **Three slash commands:**
+  - `/vault-audit` — semantic audit (cross-domain bridges, thematic
+    patterns, suggested links, suggested new notes). Read-only.
+  - `/vault-tag-pass` — full sweep like the one that already worked
+    on your vault: adds missing tags/links, fixes broken wikilinks,
+    respects your taxonomy, never writes `priority`.
+  - `/frontmatter-check` — verifies actionable notes carry the
+    plugin's frontmatter contract. Read-only.
+
+Runs against your existing Claude subscription, not per-token API
+billing. Install steps: [`vault-claude-config/README.md`](vault-claude-config/README.md).
 
 ## Design tenets
 
@@ -125,4 +151,12 @@ windows/
   ListAssistant_Nightly.xml       Task Scheduler task definition
   ListAssistant_TriageAndSync.url On-demand desktop shortcut
   install.ps1                     One-command installer for both
+vault-claude-config/
+  README.md           How to install into the vault
+  .claude/
+    CLAUDE.md         Vault primer Claude Code reads at session start
+    commands/
+      vault-audit.md         /vault-audit slash command
+      vault-tag-pass.md      /vault-tag-pass slash command
+      frontmatter-check.md   /frontmatter-check slash command
 ```
