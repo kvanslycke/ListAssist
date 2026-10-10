@@ -8,7 +8,7 @@
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "typecheck": "tsc -noEmit -skipLibCheck",
     "test:build": "node scripts/test-build.mjs",
-    "test": "npm run test:build && node --test test/"
+    "test": "npm run test:build && node --test \"test/*.test.mjs\""
   },
   "keywords": ["obsidian-plugin", "obsidian", "productivity", "eisenhower"],
   "author": "Kevin Van Slycke",

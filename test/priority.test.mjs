@@ -21,13 +21,15 @@ const writerCore = await import("../.test-build/smart/writer-core.js");
 const { renderNote, assertNoPriorityWrite } = writerCore;
 
 // Adversarial extraction payloads: the model "insists" on a priority.
-// The writer must drop these and emit an empty/undefined priority key
-// for every actionable template.
+// `priority` must always come out empty. `Priority Level` is template-
+// locked (passthrough from the template; never set from extracted) —
+// the leak values are chosen to NOT match any value the fixtures carry,
+// so the assertion only fires when the writer actually accepted them.
 const PRIORITY_LEAKS = [
   { priority: "q1" },
   { priority: "urgent" },
-  { "Priority Level": "1: Urgent & Important" },
-  { priority: "q2", "Priority Level": "2: Not Urgent, Important" },
+  { "Priority Level": "99: Satan Urgent" },
+  { priority: "q2", "Priority Level": "88: Writer should not accept this" },
 ];
 
 test("renderNote never writes a non-empty priority — all 14 templates", async (t) => {
