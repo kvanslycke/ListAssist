@@ -27,6 +27,18 @@ export interface ListAssistantSettings {
   auditMinMentionFilesForEntity: number;
   auditMinMentionFilesForUrl: number;
   auditHubExemptTags: string[];
+
+  // Smart Note mode
+  smartNoteOllamaUrl: string;
+  smartNoteModel: string;
+  smartNoteTemperature: number;
+  smartNoteMaxFollowUps: number;
+  smartNoteTranscriber: "whisper" | "gemma-experimental" | "none";
+  smartNoteWhisperUrl: string;
+  smartNoteWhisperModel: "base.en" | "small.en";
+  smartNoteFolderExcludeList: string[];
+  smartNoteAppendModeTemplates: string[];
+  smartNoteLastUsedByTemplate: Record<string, string>;
 }
 
 export const DEFAULT_SETTINGS: ListAssistantSettings = {
@@ -54,6 +66,24 @@ export const DEFAULT_SETTINGS: ListAssistantSettings = {
   auditMinMentionFilesForEntity: 3,
   auditMinMentionFilesForUrl: 2,
   auditHubExemptTags: ["hub", "index", "moc"],
+
+  smartNoteOllamaUrl: "http://localhost:11434",
+  smartNoteModel: "gemma4:e2b",
+  smartNoteTemperature: 0.2,
+  smartNoteMaxFollowUps: 3,
+  smartNoteTranscriber: "whisper",
+  smartNoteWhisperUrl: "http://127.0.0.1:8080/inference",
+  smartNoteWhisperModel: "base.en",
+  smartNoteFolderExcludeList: [
+    ".obsidian",
+    ".claude",
+    "Templates HUB",
+    "Daily Priorities",
+    "Vault Audits",
+    "_backups",
+  ],
+  smartNoteAppendModeTemplates: ["Anger Log Template"],
+  smartNoteLastUsedByTemplate: {},
 };
 
 function parseIntSafe(v: string, fallback: number): number {
