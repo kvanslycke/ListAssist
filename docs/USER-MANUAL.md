@@ -19,13 +19,14 @@ semantic vault work via Claude Code. Zero paid API dependencies.
 2. [First-time install](#first-time-install)
 3. [Daily use — the shape of the workflow](#daily-use)
 4. [The frontmatter contract](#the-frontmatter-contract)
-5. [Commands, ribbon icons, URIs](#commands-ribbon-icons-uris)
-6. [Google Calendar setup](#google-calendar-setup)
-7. [Windows nightly automation](#windows-nightly-automation)
-8. [Claude Code companion — the semantic layer](#claude-code-companion)
-9. [Settings reference](#settings-reference)
-10. [Troubleshooting](#troubleshooting)
-11. [Uninstall](#uninstall)
+5. [Smart Note mode](#smart-note-mode)
+6. [Commands, ribbon icons, URIs](#commands-ribbon-icons-uris)
+7. [Google Calendar setup](#google-calendar-setup)
+8. [Windows nightly automation](#windows-nightly-automation)
+9. [Claude Code companion — the semantic layer](#claude-code-companion)
+10. [Settings reference](#settings-reference)
+11. [Troubleshooting](#troubleshooting)
+12. [Uninstall](#uninstall)
 
 ---
 
@@ -34,11 +35,12 @@ semantic vault work via Claude Code. Zero paid API dependencies.
 The system has two layers.
 
 **Deterministic layer — the Obsidian plugin.** Runs on the Surface
-Pro and (partially) on Android. Zero-cost. Does five things:
+Pro and (partially) on Android. Zero-cost. Does six things:
 
 | Capability | Trigger | Result |
 |---|---|---|
 | Template walkthrough | Ribbon `file-plus` or cmd | Modal prompts for each frontmatter field with an empty value or `{{placeholder}}`, writes the new note |
+| **Smart Note mode** | Ribbon `mic` or cmd | Fuzzy-match a template by voice/typing, extract fields from one freeform description via local Ollama + gemma4:e2b, up to 3 follow-ups, previewed before save. Fully offline. Falls back to the standard walkthrough when Ollama is down. |
 | Daily Eisenhower triage | Ribbon `list-checks` or cmd | Scans every note with `priority:` set, groups by quadrant, writes `Daily Priorities\YYYY-MM-DD.md` |
 | Google Calendar sync | Ribbon `calendar-sync` or cmd | Notes with `priority: q1` + `due:` become 16:00–17:00 events; `q2` become all-day reminders 3 days before; Plan of the Day with `rapids-class` fires the full timed chain |
 | Vault audit | Ribbon `search-check` or cmd | Nine deterministic checks: untagged notes, broken wikilinks, stubs, duplicates, orphans, sinks, unlinked mentions, entities without a note, URLs without a note. Writes `Vault Audits\YYYY-MM-DD.md`. Never edits notes |
@@ -55,7 +57,8 @@ directory:
 
 Both layers respect one non-negotiable rule: **the system never
 writes the `priority:` frontmatter field.** You own priority
-assignment.
+assignment. (Smart Note enforces this with a unit-tested hard-rule
+guard — adversarial model output cannot slip a priority in.)
 
 ---
 
@@ -199,6 +202,129 @@ in.
 | Rapids System | *(already has `date`, `class`)* | Keep `## Class N` block structure exactly |
 
 Full spec in [`FRONTMATTER.md`](FRONTMATTER.md).
+
+---
+
+## Smart Note mode
+
+Turns a spoken or typed description into a fully formatted,
+tagged, linked note built from one of your templates. Fully
+offline: local [Ollama](https://ollama.com) running `gemma4:e2b`,
+plus [whisper.cpp](https://github.com/ggerganov/whisper.cpp) for
+voice. No cloud APIs.
+
+### One-time setup
+
+1. **Install Ollama**: download `OllamaSetup.exe` from
+   https://ollama.com/download and run it. The installer sets up
+   Ollama as a background service on `http://localhost:11434`.
+2. **Pull the model**: in PowerShell, run `ollama pull gemma4:e2b`
+   (~3.5 GB).
+3. **(Optional, recommended) Install whisper.cpp for voice**: from
+   this repo, run `windows\setup-whisper.ps1`. Pass
+   `-RegisterLoginTask` to start the whisper server at login.
+   Smart Note's mic button is disabled with a tooltip if the
+   whisper server isn't reachable; typing still works.
+
+### Daily use
+
+- **Trigger**: ribbon mic icon or Command Palette → **"Smart note
+  from template"**. Assign a hotkey from Obsidian's Hotkeys
+  settings if you want one.
+- **Pick template**: say or type the kind of note — "grocery
+  list", "person", "anger log", "project", "trip packing". The
+  modal fuzzy-matches against the Templates HUB folder. If
+  there's ambiguity it offers the top 3.
+- **Capture**: press the mic (toggle) and talk freely, or type.
+  Every transcript lands in an editable textbox first so you can
+  fix misheard words before extraction runs.
+- **Extraction**: one call to Ollama with a JSON Schema matching
+  the template's ask fields, inline bold fields (e.g. Anger Log's
+  `**Trigger:**`), and body section headings. Only values you
+  actually said are filled in — fields you didn't mention stay
+  empty.
+- **Follow-ups**: up to 3 (configurable). Priority: still-empty
+  ask fields first, then model-judged gaps. Each follow-up
+  accepts "answer", "skip", or "done".
+- **Preview**: editable rendered markdown, editable title, folder
+  dropdown (preselected with a one-line reason), hub-link toggle
+  (default on). On actionable templates you'll see a reminder
+  that `priority:` is intentionally empty — set it at daily
+  triage.
+- **Save**: writes through the Obsidian API (`vault.create` or
+  `vault.process` for append-mode), opens the note, and
+  optionally appends `- [[new note]]` to the hub's Main note
+  under `## Notes` (or `## Projects` for Projects).
+
+### Append-mode (Anger Log)
+
+Anger Log doesn't create a new file per entry — it appends to a
+monthly file (`Anger Log <MMMM YYYY>.md`) under
+`Health HUB/Anger MGMT/AngerLogs`. Entry blocks go above any
+trailing wikilink line, `updated:` is bumped, and the rest of the
+file is preserved. If the month's file doesn't exist yet, Smart
+Note creates it from the template with the first entry inside.
+
+### Ollama-down fallback
+
+If `/api/tags` isn't reachable or `gemma4:e2b` isn't pulled,
+Smart Note shows a Notice ("Ollama not running — using standard
+walkthrough") and opens the regular "Create note from template"
+modal in its place. The standard walkthrough is untouched.
+
+### Benchmark command
+
+Command Palette → **"Smart Note: benchmark transcribers"** records
+10 s and reports whisper vs Gemma-native latency + text side by
+side (Notice + `console.table` in dev tools). Use it on the SP7
+itself to decide which transcriber to run.
+
+### Hard rules
+
+- `priority:` is never written non-empty. The writer has a
+  unit-tested `assertNoPriorityWrite` guard called on every
+  outgoing frontmatter object. If you say "this is urgent", the
+  note still saves with `priority:` empty and the preview shows a
+  one-line reminder to set it at triage.
+- `Priority Level` / `Priority Matrix` are template-locked:
+  Smart Note preserves whatever value the template carries and
+  never accepts a value from the extracted payload.
+- Tags come only from `Reference HUB/Tags.md` plus the template's
+  own defaults. The model's tag output is enum-constrained. If it
+  proposes a brand-new tag it surfaces in the preview as an
+  unchecked checkbox; only when you check it does Smart Note
+  append it to Tags.md under "Suggested — general life" with a
+  Log line.
+- Never overwrites an existing file: collision suffix is `name
+  (2).md`, `name (3).md`, …
+- Never fabricates: if you didn't mention a section, it stays as
+  the template left it (empty checkbox, blank field).
+
+### Settings
+
+Under List Assistant settings → Smart Note:
+
+- `smartNoteOllamaUrl` — default `http://localhost:11434`
+- `smartNoteModel` — default `gemma4:e2b`
+- `smartNoteTemperature` — default `0.2`
+- `smartNoteMaxFollowUps` — default `3`
+- `smartNoteTranscriber` — `whisper` / `gemma-experimental` /
+  `none`. Default `whisper`.
+- `smartNoteWhisperUrl` — default `http://127.0.0.1:8080/inference`
+- `smartNoteWhisperModel` — `base.en` / `small.en`
+- `smartNoteAppendModeTemplates` — default `["Anger Log Template"]`
+- `smartNoteFolderExcludeList` — defaults exclude `.obsidian`,
+  `.claude`, `Templates HUB`, `Daily Priorities`,
+  `Vault Audits`, `_backups`
+- `smartNoteLastUsedByTemplate` — plugin-maintained memory of
+  the folder you picked last time for each template
+
+### Log
+
+Every session appends one JSONL line to
+`.obsidian/plugins/list-assistant/smart-note-log.jsonl` with
+timestamp, template, folder, follow-up counts, latency, outcome.
+No note content is ever logged.
 
 ---
 
