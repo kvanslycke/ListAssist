@@ -10,15 +10,15 @@ import { glob } from "node:fs/promises";
 import path from "node:path";
 
 const entries = [];
-for await (const match of glob("src/smart/*-core.ts")) {
+for await (const match of glob("src/smart/*.ts")) {
   entries.push(match);
 }
 
 if (entries.length === 0) {
-  // No core modules yet — nothing to compile. Tests that import from
-  // .test-build/ will fail at import time, which is the expected
+  // No Smart Note modules yet — nothing to compile. Tests that import
+  // from .test-build/ will fail at import time, which is the expected
   // behavior before the real modules land.
-  console.log("test-build: no src/smart/*-core.ts files yet; skipping.");
+  console.log("test-build: no src/smart/*.ts files yet; skipping.");
   process.exit(0);
 }
 
