@@ -38,4 +38,9 @@ await build({
   external: ["obsidian"],
 });
 
+// Emit a package.json shim so Node loads the .js files as ESM
+// without the MODULE_TYPELESS_PACKAGE_JSON reparse warning.
+import { writeFileSync } from "node:fs";
+writeFileSync(".test-build/package.json", JSON.stringify({ type: "module" }), "utf8");
+
 console.log(`test-build: compiled ${entries.length} entry points to .test-build/`);
