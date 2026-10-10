@@ -31,6 +31,7 @@ import { writeSmartNote, notifyWritten, type WriteContext, type AppendModeContex
 import { parseTags } from "./tagIndex";
 import { renderAppendEntry } from "./writer-core";
 import { todayISO } from "../util";
+import { appendLog, type SmartNoteLogEntry } from "./logger";
 
 const EXCLUDED_FOLDERS = new Set([
   ".obsidian",
@@ -54,6 +55,10 @@ export class SmartNoteModal extends Modal {
   private capture = new AudioCapture();
   private readonly plugin: ListAssistantPlugin;
   private readonly opts: SmartNoteModalOptions;
+  private readonly openedAt = performance.now();
+  private followUpsAnswered = 0;
+  private outcome: "saved" | "cancelled" | "error" = "cancelled";
+  private outcomeError: string | undefined;
 
   constructor(app: App, plugin: ListAssistantPlugin, opts: SmartNoteModalOptions) {
     super(app);
@@ -85,7 +90,27 @@ export class SmartNoteModal extends Modal {
 
   onClose(): void {
     this.contentEl.empty();
+    const entry: SmartNoteLogEntry = {
+      timestamp: new Date().toISOString(),
+      template: this.session.template?.basename ?? "",
+      folder: this.lastFolderChoice,
+      follow_ups_asked: this.session.followUpsAsked,
+      follow_ups_answered: this.followUpsAnswered,
+      latency_ms: Math.round(performance.now() - this.openedAt),
+      transcriber: this.opts.transcriberKind,
+      model: this.opts.ollama.model,
+      outcome: this.outcome,
+      error: this.outcomeError,
+    };
+    const pluginDir = this.plugin.manifest.dir;
+    if (pluginDir) {
+      appendLog(this.app, pluginDir, entry).catch(() => {
+        /* logger is best-effort */
+      });
+    }
   }
+
+  private lastFolderChoice = "";
 
   private renderPhase(): void {
     const { contentEl } = this;
@@ -227,6 +252,7 @@ export class SmartNoteModal extends Modal {
     const row = el.createDiv({ cls: "modal-button-container" });
     const next = row.createEl("button", { text: "Answer", cls: "mod-cta" });
     next.addEventListener("click", () => {
+      if (answer.trim()) this.followUpsAnswered++;
       this.session = answerFollowUp(this.session, answer);
       this.renderPhase();
     });
@@ -301,6 +327,7 @@ export class SmartNoteModal extends Modal {
     const row = el.createDiv({ cls: "modal-button-container" });
     const save = row.createEl("button", { text: "Save", cls: "mod-cta" });
     save.addEventListener("click", async () => {
+      this.lastFolderChoice = folder;
       this.session = { ...this.session, state: "writing" };
       this.renderPhase();
       try {
@@ -315,9 +342,12 @@ export class SmartNoteModal extends Modal {
         await this.rememberLastUsed(folder);
         const leaf = this.app.workspace.getLeaf(false);
         if (outcome.file instanceof TFile) await leaf.openFile(outcome.file);
+        this.outcome = "saved";
         this.close();
       } catch (e) {
-        new Notice(`Save failed: ${(e as Error).message}`);
+        this.outcome = "error";
+        this.outcomeError = (e as Error).message;
+        new Notice(`Save failed: ${this.outcomeError}`);
         this.session = { ...this.session, state: "review" };
         this.renderPhase();
       }

@@ -11,6 +11,7 @@ import { beginOAuthFlow, InvalidGrantError, OAuthConfig, OAuthTokens } from "./o
 import { CalendarClient } from "./calendar";
 import { syncCalendar } from "./sync";
 import { runAndWrite as runAndWriteAudit } from "./audit";
+import { openSmartNote, benchmarkTranscribers } from "./smart/commands";
 
 export default class ListAssistantPlugin extends Plugin {
   settings!: ListAssistantSettings;
@@ -22,6 +23,24 @@ export default class ListAssistantPlugin extends Plugin {
       id: "create-note-from-template",
       name: "Create note from template",
       callback: () => this.openTemplatePicker(),
+    });
+
+    this.addCommand({
+      id: "smart-note-from-template",
+      name: "Smart note from template",
+      callback: () => {
+        openSmartNote(this).catch((err) => this.reportError("Smart Note", err));
+      },
+    });
+
+    this.addCommand({
+      id: "benchmark-transcribers",
+      name: "Smart Note: benchmark transcribers",
+      callback: () => {
+        benchmarkTranscribers(this).catch((err) =>
+          this.reportError("Transcriber benchmark", err),
+        );
+      },
     });
 
     this.addCommand({
@@ -61,6 +80,9 @@ export default class ListAssistantPlugin extends Plugin {
     this.addRibbonIcon("file-plus", "List Assistant: create from template", () =>
       this.openTemplatePicker(),
     );
+    this.addRibbonIcon("mic", "List Assistant: smart note", () => {
+      openSmartNote(this).catch((err) => this.reportError("Smart Note", err));
+    });
     this.addRibbonIcon("list-checks", "List Assistant: run daily triage", () => {
       this.runTriage().catch((err) => this.reportError("Triage", err));
     });
