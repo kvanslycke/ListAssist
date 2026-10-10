@@ -7,7 +7,7 @@ import {
   ListAssistantSettingTab,
 } from "./settings";
 import { runTriage } from "./triage";
-import { beginOAuthFlow, OAuthConfig, OAuthTokens } from "./oauth";
+import { beginOAuthFlow, InvalidGrantError, OAuthConfig, OAuthTokens } from "./oauth";
 import { CalendarClient } from "./calendar";
 import { syncCalendar } from "./sync";
 import { runAndWrite as runAndWriteAudit } from "./audit";
@@ -161,15 +161,30 @@ export default class ListAssistantPlugin extends Plugin {
     }
     const client = this.buildClient(this.settings.googleTokens);
     if (!client) return;
-    const summary = await syncCalendar(this.app, client, {
-      q1StartHour: this.settings.q1StartHour,
-      q1StartMinute: this.settings.q1StartMinute,
-      q1EndHour: this.settings.q1EndHour,
-      q1EndMinute: this.settings.q1EndMinute,
-      q2ReminderDays: this.settings.q2ReminderDays,
-      rapidsTemplatePath: this.settings.rapidsTemplatePath,
-      excludeFolders: this.settings.triageExcludeFolders,
-    });
+    let summary;
+    try {
+      summary = await syncCalendar(this.app, client, {
+        q1StartHour: this.settings.q1StartHour,
+        q1StartMinute: this.settings.q1StartMinute,
+        q1EndHour: this.settings.q1EndHour,
+        q1EndMinute: this.settings.q1EndMinute,
+        q2ReminderDays: this.settings.q2ReminderDays,
+        rapidsTemplatePath: this.settings.rapidsTemplatePath,
+        excludeFolders: this.settings.triageExcludeFolders,
+      });
+    } catch (e) {
+      if (e instanceof InvalidGrantError) {
+        this.settings.googleTokens = null;
+        await this.saveSettings();
+        console.error("List Assistant calendar sync: invalid_grant", e);
+        new Notice(
+          "Google refresh token is no longer valid. Open List Assistant settings and press Connect to re-authorize.",
+          10000,
+        );
+        return;
+      }
+      throw e;
+    }
     const errPart = summary.errors.length ? `\n${summary.errors.length} errors (see console)` : "";
     if (summary.errors.length) {
       for (const e of summary.errors) console.error("List Assistant calendar sync:", e);

@@ -2,6 +2,7 @@ import { App, TFile, normalizePath } from "obsidian";
 import { CalendarClient, CalendarEventSpec, EVENT_TAG } from "./calendar";
 import { parseRapidsSchedules } from "./rapids";
 import { parsePriority } from "./triage";
+import { InvalidGrantError } from "./oauth";
 
 export const TIMEZONE = "America/Denver";
 const STATUS_DONE = new Set(["done", "completed", "complete", "cancelled", "canceled"]);
@@ -163,14 +164,45 @@ export async function syncCalendar(
   let created = 0;
   let updated = 0;
   const errors: string[] = [];
+
+  // Pre-flight: one authenticated call so bad auth surfaces once, not N times.
+  // InvalidGrantError propagates up so the plugin can clear tokens and notify.
+  await client.whoAmI();
+
   for (const spec of specs) {
     try {
       const r = await client.upsert(spec);
       if (r.created) created++;
       else updated++;
     } catch (e) {
+      if (e instanceof InvalidGrantError) throw e;
       errors.push(`${spec.sourceKey} (${spec.kind}): ${(e as Error).message}`);
     }
   }
-  return { created, updated, skippedFiles: skipped, scannedFiles: scanned, errors };
+  return {
+    created,
+    updated,
+    skippedFiles: skipped,
+    scannedFiles: scanned,
+    errors: dedupeErrors(errors),
+  };
+}
+
+function dedupeErrors(errors: string[]): string[] {
+  const seen = new Map<string, number>();
+  const order: string[] = [];
+  for (const e of errors) {
+    const tail = e.includes(":") ? e.slice(e.indexOf(":") + 1).trim() : e;
+    const key = tail;
+    if (!seen.has(key)) {
+      seen.set(key, 1);
+      order.push(key);
+    } else {
+      seen.set(key, (seen.get(key) ?? 0) + 1);
+    }
+  }
+  return order.map((k) => {
+    const n = seen.get(k) ?? 1;
+    return n > 1 ? `${n}× ${k}` : k;
+  });
 }

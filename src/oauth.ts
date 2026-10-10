@@ -16,6 +16,21 @@ const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const SCOPE = "https://www.googleapis.com/auth/calendar.events";
 
+export class InvalidGrantError extends Error {
+  constructor(public readonly detail: string) {
+    super(`Google refresh token is no longer valid (${detail}). Reconnect Google Calendar in List Assistant settings.`);
+    this.name = "InvalidGrantError";
+  }
+}
+
+function tryParseJson(s: string): unknown {
+  try {
+    return JSON.parse(s);
+  } catch {
+    return null;
+  }
+}
+
 function base64UrlEncode(bytes: Uint8Array): string {
   let s = "";
   for (const b of bytes) s += String.fromCharCode(b);
@@ -181,6 +196,10 @@ export async function refreshAccessToken(
     throw: false,
   });
   if (resp.status !== 200) {
+    const parsed = tryParseJson(resp.text) as { error?: string; error_description?: string } | null;
+    if (resp.status === 400 && parsed?.error === "invalid_grant") {
+      throw new InvalidGrantError(parsed.error_description ?? "invalid_grant");
+    }
     throw new Error(`Token refresh failed: ${resp.status} ${resp.text}`);
   }
   const data = resp.json as {
