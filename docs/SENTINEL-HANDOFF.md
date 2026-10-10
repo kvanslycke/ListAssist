@@ -139,7 +139,7 @@ Registered under scheme handler `list-assistant`. Actions:
 
 ## Coordination points with Sentinel
 
-- **Shared vault at `~/KevinsRoots/Obsidian Vault/KevlarMainVault`.**
+- **Shared vault at `~/KevinsRoots/ObsidianVault/KevlarMainVault`.**
   Both systems read and (may) write. Neither system holds a lock;
   concurrent edits rely on Obsidian's own event queue and Obsidian
   Sync's conflict handling
@@ -185,10 +185,10 @@ To fully remove:
 Unregister-ScheduledTask -TaskPath '\ListAssistant\' -TaskName 'Nightly triage and sync' -Confirm:$false
 
 # Remove plugin
-Remove-Item -Recurse "C:\Users\kevin\KevinsRoots\Obsidian Vault\KevlarMainVault\.obsidian\plugins\list-assistant"
+Remove-Item -Recurse "C:\Users\kevin\KevinsRoots\ObsidianVault\KevlarMainVault\.obsidian\plugins\list-assistant"
 
 # Remove Claude Code config
-Remove-Item -Recurse "C:\Users\kevin\KevinsRoots\Obsidian Vault\KevlarMainVault\.claude"
+Remove-Item -Recurse "C:\Users\kevin\KevinsRoots\ObsidianVault\KevlarMainVault\.claude"
 
 # Remove desktop shortcut
 Remove-Item "$([Environment]::GetFolderPath('Desktop'))\List Assistant — Triage and Sync.url" -ErrorAction SilentlyContinue

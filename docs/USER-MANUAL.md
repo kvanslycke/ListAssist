@@ -82,11 +82,11 @@ That produces `main.js` in the ListAssist folder.
 ### 2. Install the plugin into the vault
 
 ```cmd
-mkdir "C:\Users\kevin\KevinsRoots\Obsidian Vault\KevlarMainVault\.obsidian\plugins\list-assistant"
+mkdir "C:\Users\kevin\KevinsRoots\ObsidianVault\KevlarMainVault\.obsidian\plugins\list-assistant"
 
-copy manifest.json "C:\Users\kevin\KevinsRoots\Obsidian Vault\KevlarMainVault\.obsidian\plugins\list-assistant\"
+copy manifest.json "C:\Users\kevin\KevinsRoots\ObsidianVault\KevlarMainVault\.obsidian\plugins\list-assistant\"
 
-copy main.js "C:\Users\kevin\KevinsRoots\Obsidian Vault\KevlarMainVault\.obsidian\plugins\list-assistant\"
+copy main.js "C:\Users\kevin\KevinsRoots\ObsidianVault\KevlarMainVault\.obsidian\plugins\list-assistant\"
 ```
 
 Then in Obsidian → Settings → Community plugins:
@@ -119,7 +119,7 @@ Registers a Task Scheduler entry and drops a desktop shortcut. See
 
 ```powershell
 robocopy "C:\Users\kevin\ListAssist\vault-claude-config\.claude" `
-         "C:\Users\kevin\KevinsRoots\Obsidian Vault\KevlarMainVault\.claude" /E
+         "C:\Users\kevin\KevinsRoots\ObsidianVault\KevlarMainVault\.claude" /E
 ```
 
 That's it. See [Claude Code companion](#claude-code-companion).
@@ -296,7 +296,7 @@ For the meaning-level work the plugin deliberately doesn't do:
 **Use anytime:**
 
 ```cmd
-cd "C:\Users\kevin\KevinsRoots\Obsidian Vault\KevlarMainVault"
+cd "C:\Users\kevin\KevinsRoots\ObsidianVault\KevlarMainVault"
 claude
 ```
 
@@ -377,7 +377,7 @@ stale. Rebuild:
 cd C:\Users\kevin\ListAssist
 git pull
 npm run build
-copy main.js "C:\Users\kevin\KevinsRoots\Obsidian Vault\KevlarMainVault\.obsidian\plugins\list-assistant\"
+copy main.js "C:\Users\kevin\KevinsRoots\ObsidianVault\KevlarMainVault\.obsidian\plugins\list-assistant\"
 ```
 
 Then Ctrl-R in Obsidian.
@@ -409,7 +409,7 @@ the task manually.
 a different directory. From PowerShell:
 
 ```powershell
-dir -Force "C:\Users\kevin\KevinsRoots\Obsidian Vault\KevlarMainVault\.claude\commands"
+dir -Force "C:\Users\kevin\KevinsRoots\ObsidianVault\KevlarMainVault\.claude\commands"
 ```
 
 If nothing lists, re-run the robocopy step. Then `cd` into the
@@ -430,10 +430,10 @@ Full removal (elevated PowerShell):
 Unregister-ScheduledTask -TaskPath '\ListAssistant\' -TaskName 'Nightly triage and sync' -Confirm:$false
 
 # Remove the plugin from the vault
-Remove-Item -Recurse "C:\Users\kevin\KevinsRoots\Obsidian Vault\KevlarMainVault\.obsidian\plugins\list-assistant"
+Remove-Item -Recurse "C:\Users\kevin\KevinsRoots\ObsidianVault\KevlarMainVault\.obsidian\plugins\list-assistant"
 
 # Remove the Claude Code companion
-Remove-Item -Recurse "C:\Users\kevin\KevinsRoots\Obsidian Vault\KevlarMainVault\.claude"
+Remove-Item -Recurse "C:\Users\kevin\KevinsRoots\ObsidianVault\KevlarMainVault\.claude"
 
 # Remove the desktop shortcut
 Remove-Item "$([Environment]::GetFolderPath('Desktop'))\List Assistant — Triage and Sync.url" -ErrorAction SilentlyContinue

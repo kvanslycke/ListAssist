@@ -1,7 +1,7 @@
 # Kevin's Obsidian vault — primer for Claude Code
 
 This is the KevlarMainVault: a personal knowledge base at
-`C:\Users\kevin\KevinsRoots\Obsidian Vault\KevlarMainVault\`. It's
+`C:\Users\kevin\KevinsRoots\ObsidianVault\KevlarMainVault\`. It's
 organized by HUB folders (Adventures HUB, Automobile HUB, Health HUB,
 Hobbies HUB, K&K Ranch HUB, Reference HUB, Sentinel System, Templates
 HUB, Websites HUB, People HUB, and so on), with each hub's `<Hub> Main.md`
