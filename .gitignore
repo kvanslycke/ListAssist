@@ -7,3 +7,4 @@ main.js
 build/
 dist/
 *.log
+.test-build/
