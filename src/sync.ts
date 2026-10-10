@@ -166,8 +166,10 @@ export async function syncCalendar(
   const errors: string[] = [];
 
   // Pre-flight: one authenticated call so bad auth surfaces once, not N times.
+  // Uses events.list (same scope as upserts) so a working events scope passes
+  // regardless of whether the broader `calendar` scope is granted.
   // InvalidGrantError propagates up so the plugin can clear tokens and notify.
-  await client.whoAmI();
+  await client.probeAuth();
 
   for (const spec of specs) {
     try {

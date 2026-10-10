@@ -141,4 +141,13 @@ export class CalendarClient {
     };
     return data.summary || data.id || this.calendarId;
   }
+
+  // Scope-compatible auth probe. events.list is covered by
+  // `calendar.events`, unlike GET /calendars/{id} which needs the full
+  // calendar scope. Returns on success, throws on auth/scope failure.
+  async probeAuth(): Promise<void> {
+    await this.apiFetch(
+      `/calendars/${this.encodeCalendarId()}/events?maxResults=1&showDeleted=false`,
+    );
+  }
 }
