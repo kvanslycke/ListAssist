@@ -23,9 +23,35 @@ export const DEFAULT_CONFIG: Omit<OllamaConfig, "fetchImpl"> = {
   model: "gemma4:e2b",
   temperature: 0.2,
   numCtx: 8192,
-  keepAlive: "15m",
-  timeoutMs: 30000,
+  keepAlive: "30m",
+  // Gemma 4 e2b on SP7 CPU: cold load ~45-60 s, extraction ~30-120 s.
+  // 180 s covers both; keep_alive stops the model from being evicted
+  // between back-to-back sessions.
+  timeoutMs: 180000,
 };
+
+// POST a trivial no-op chat so Ollama loads the model into RAM. The
+// returned promise resolves as soon as the model is resident; use it
+// to warm Ollama while the user is still typing. Errors are swallowed
+// — the real extract call will surface them with its own message.
+export async function prewarmModel(cfg: OllamaConfig): Promise<void> {
+  const f = cfg.fetchImpl ?? fetch;
+  try {
+    await f(`${cfg.baseUrl}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: cfg.model,
+        messages: [{ role: "user", content: "ok" }],
+        stream: false,
+        keep_alive: cfg.keepAlive,
+        options: { num_predict: 1, temperature: 0, think: false },
+      }),
+    });
+  } catch {
+    // best-effort
+  }
+}
 
 export interface HealthResult {
   ok: boolean;

@@ -95,10 +95,11 @@ export function renderNote(input: RenderInput): RenderResult {
   // Final guard rail — defense in depth.
   assertNoPriorityWrite(outFm);
 
-  const body = substituteBodyPlaceholders(schema.body, {
+  const substituted = substituteBodyPlaceholders(schema.body, {
     title: input.title,
     date: input.today,
   });
+  const body = mergeExtractedIntoBody(substituted, schema, extracted);
 
   const filename = sanitizeFilename(input.title);
 
@@ -167,6 +168,110 @@ function substituteBodyPlaceholders(
     // {{name}} marker so the user sees it in the preview.
     return `{{${name}}}`;
   });
+}
+
+// Walks the body, filling two things from `extracted` without ever
+// fabricating:
+//   - For each `## Section` whose heading matches an extracted key with
+//     an array value, empty "- [ ]" checkboxes in that section get
+//     filled with the extracted items (first-fit, left to right), and
+//     any items beyond the empty slots are appended as new "- [ ] item"
+//     lines at the end of that section. Pre-filled checkbox items in
+//     the template are kept verbatim and extracted items that match
+//     them (case-insensitive) are dropped so we don't duplicate.
+//   - For each "**Label:**" inline field whose label matches an
+//     extracted key with a non-empty string value AND whose current
+//     inline value is empty, the inline value is filled in. Pre-filled
+//     inline values are left alone.
+// Sections and labels not present in `extracted` are untouched (no
+// fabrication).
+export function mergeExtractedIntoBody(
+  body: string,
+  schema: TemplateSchema,
+  extracted: Record<string, unknown>,
+): string {
+  const sectionItems = new Map<string, string[]>();
+  for (const sec of schema.bodySections) {
+    const v = extracted[sec.heading];
+    if (Array.isArray(v)) {
+      const items = v
+        .filter((x): x is string => typeof x === "string")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      if (items.length > 0) sectionItems.set(sec.heading, items);
+    }
+  }
+  const inlineValues = new Map<string, string>();
+  for (const f of schema.inlineBoldFields) {
+    const v = extracted[f.label];
+    if (typeof v === "string" && v.trim().length > 0) {
+      inlineValues.set(f.label, v.trim());
+    }
+  }
+
+  if (sectionItems.size === 0 && inlineValues.size === 0) return body;
+
+  const headingRe = /^(#{1,6})\s+(.+?)\s*$/;
+  const inlineRe = /^(\s*\*\*([^*]+?):\*\*\s*)(.*)$/;
+  const emptyCheckboxRe = /^(\s*-\s+\[\s*\]\s*)$/;
+  const prefilledCheckboxRe = /^(\s*-\s+\[\s*\]\s+)(\S.*?)\s*$/;
+
+  const lines = body.split("\n");
+  const out: string[] = [];
+  let currentSection: string | null = null;
+  let pending: string[] = [];
+
+  const flushPending = (): void => {
+    if (pending.length === 0) return;
+    while (out.length > 0 && out[out.length - 1].trim() === "") out.pop();
+    for (const item of pending) out.push(`- [ ] ${item}`);
+    pending = [];
+  };
+
+  for (const line of lines) {
+    const hm = headingRe.exec(line);
+    if (hm) {
+      flushPending();
+      currentSection = hm[2];
+      const items = sectionItems.get(currentSection);
+      pending = items ? [...items] : [];
+      out.push(line);
+      continue;
+    }
+
+    if (inlineValues.size > 0) {
+      const im = inlineRe.exec(line);
+      if (im) {
+        const label = im[2].trim();
+        const existing = im[3].trim();
+        const incoming = inlineValues.get(label);
+        if (incoming && existing === "") {
+          out.push(`${im[1]}${incoming}`);
+          continue;
+        }
+      }
+    }
+
+    if (pending.length > 0 && currentSection !== null) {
+      if (emptyCheckboxRe.test(line)) {
+        const next = pending.shift();
+        if (next !== undefined) {
+          out.push(`- [ ] ${next}`);
+          continue;
+        }
+      }
+      const pf = prefilledCheckboxRe.exec(line);
+      if (pf) {
+        const existingLower = pf[2].toLowerCase();
+        pending = pending.filter((p) => p.toLowerCase() !== existingLower);
+      }
+    }
+
+    out.push(line);
+  }
+  flushPending();
+
+  return out.join("\n");
 }
 
 // Render YAML frontmatter string in the exact key order produced by

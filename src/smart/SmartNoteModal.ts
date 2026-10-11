@@ -21,7 +21,7 @@ import {
   type SessionState,
   type TemplateRef,
 } from "./session";
-import { chat as ollamaChat, DEFAULT_CONFIG as OLLAMA_DEFAULTS, type OllamaConfig } from "./ollamaClient";
+import { chat as ollamaChat, DEFAULT_CONFIG as OLLAMA_DEFAULTS, prewarmModel, type OllamaConfig } from "./ollamaClient";
 import { AudioCapture } from "./audioCapture";
 import { WhisperTranscriber, whisperHealth } from "./whisperTranscriber";
 import { GemmaTranscriber } from "./gemmaTranscriber";
@@ -32,6 +32,9 @@ import { parseTags } from "./tagIndex";
 import { renderAppendEntry } from "./writer-core";
 import { todayISO } from "../util";
 import { appendLog, type SmartNoteLogEntry } from "./logger";
+import { parseMenuItems, type MenuIndex } from "./menuItems";
+
+const MENU_ITEMS_PATH = "Reference HUB/Menu Items.md";
 
 const EXCLUDED_FOLDERS = new Set([
   ".obsidian",
@@ -86,6 +89,12 @@ export class SmartNoteModal extends Modal {
 
   onOpen(): void {
     this.renderPhase();
+    // Prewarm Ollama in the background while the user picks a template
+    // and types. The first inference per session otherwise pays the
+    // full model-load cost (~45-60 s cold on SP7 CPU).
+    prewarmModel(this.opts.ollama).catch(() => {
+      // best-effort; the real call will surface errors
+    });
   }
 
   onClose(): void {
@@ -168,13 +177,28 @@ export class SmartNoteModal extends Modal {
     cancel.addEventListener("click", () => this.close());
   }
 
+  private expandMeals = false;
+  private expandMenuNumbers = false;
+  private menuIndex: MenuIndex | null = null;
+
+  private async ensureMenuIndex(): Promise<MenuIndex | null> {
+    if (this.menuIndex) return this.menuIndex;
+    const file = this.app.vault.getAbstractFileByPath(MENU_ITEMS_PATH);
+    if (!(file instanceof TFile)) return null;
+    try {
+      const content = await this.app.vault.read(file);
+      this.menuIndex = parseMenuItems(content);
+      return this.menuIndex;
+    } catch {
+      return null;
+    }
+  }
+
   private renderCapture(el: HTMLElement): void {
     const tpl = this.session.template!;
-    el.createEl("h2", { text: `Tell me about this ${humanize(tpl.basename)}` });
-    el.createEl("p", {
-      text:
-        "Speak freely. Press the mic to record (hold or toggle), or type into the box. Done when ready.",
-    });
+    const copy = captureCopyFor(tpl.basename);
+    el.createEl("h2", { text: copy.heading });
+    el.createEl("p", { text: copy.description });
 
     const log = el.createDiv({ cls: "smart-note-log" });
     log.style.minHeight = "80px";
@@ -184,7 +208,30 @@ export class SmartNoteModal extends Modal {
     const area = el.createEl("textarea");
     area.rows = 6;
     area.style.width = "100%";
-    area.placeholder = "Type here, or use the mic above.";
+    area.placeholder = copy.placeholder;
+
+    // Grocery-only: two independent toggles.
+    const isGrocery = /grocery/i.test(tpl.basename);
+    if (isGrocery) {
+      new Setting(el)
+        .setName("Expand menu numbers from Reference HUB/Menu Items.md")
+        .setDesc(
+          "When on, naming a menu ID (e.g. \"L47\", \"D32, D40\", \"breakfast 11\") looks up the dish in your curated Menu Items table and adds its ingredients. Deterministic — no LLM invention. Dishes with blank Ingredients cells are skipped with a warning.",
+        )
+        .addToggle((t) => {
+          t.setValue(this.expandMenuNumbers);
+          t.onChange((v) => (this.expandMenuNumbers = v));
+        });
+      new Setting(el)
+        .setName("Expand meals into ingredients (LLM guess)")
+        .setDesc(
+          "When on, naming a meal in free text (e.g. \"chicken parmesan Thursday\") uses the local model to add typical ingredients. For dishes not yet in your Menu Items table. Off by default.",
+        )
+        .addToggle((t) => {
+          t.setValue(this.expandMeals);
+          t.onChange((v) => (this.expandMeals = v));
+        });
+    }
 
     const row = el.createDiv({ cls: "modal-button-container" });
     const micBtn = row.createEl("button", { text: "🎙 Record (toggle)" });
@@ -226,7 +273,20 @@ export class SmartNoteModal extends Modal {
       log.textContent = text;
       this.session = { ...this.session, state: "extract" };
       this.renderPhase();
-      this.session = await submitCapture(this.session, text);
+      let menuIndex: MenuIndex | null = null;
+      if (this.expandMenuNumbers) {
+        menuIndex = await this.ensureMenuIndex();
+        if (!menuIndex) {
+          new Notice(
+            `Menu Items file not found at ${MENU_ITEMS_PATH} — continuing without menu lookup.`,
+          );
+        }
+      }
+      this.session = await submitCapture(this.session, text, {
+        expandMeals: this.expandMeals,
+        expandMenuNumbers: this.expandMenuNumbers,
+        menuIndex,
+      });
       this.renderPhase();
     });
 
@@ -274,6 +334,32 @@ export class SmartNoteModal extends Modal {
       return;
     }
     el.createEl("h2", { text: "Preview" });
+
+    if (this.session.warnings.length > 0) {
+      const box = el.createDiv();
+      box.style.border = "1px solid var(--text-warning)";
+      box.style.padding = "6px 10px";
+      box.style.marginBottom = "8px";
+      box.style.borderRadius = "4px";
+      const h = box.createEl("div", { text: "Menu lookup warnings:" });
+      h.style.fontWeight = "600";
+      const ul = box.createEl("ul");
+      ul.style.margin = "4px 0 0 0";
+      for (const w of this.session.warnings) {
+        ul.createEl("li", { text: w });
+      }
+    }
+
+    if (this.session.menuExpansion && this.session.menuExpansion.found.length > 0) {
+      const box = el.createDiv();
+      box.style.opacity = "0.8";
+      box.style.fontSize = "0.9em";
+      box.style.marginBottom = "8px";
+      const dishes = this.session.menuExpansion.found
+        .map((m) => `${m.id} ${m.dish}`)
+        .join(" · ");
+      box.createEl("div", { text: `From menu: ${dishes}` });
+    }
 
     // Title
     let title = plan.title;
@@ -364,10 +450,48 @@ export class SmartNoteModal extends Modal {
   }
 
   private renderError(el: HTMLElement): void {
+    // Reaching this phase means something upstream threw (Ollama
+    // timeout, invalid-JSON retry failure, menu lookup fault, …).
+    // Record the outcome honestly so the log doesn't claim the user
+    // cancelled an abort.
+    this.outcome = "error";
+    this.outcomeError = this.session.error ?? "(no error message)";
+    const msg = this.session.error ?? "(no error message)";
+    const looksLikeAbort = /abort|timeout|signal/i.test(msg);
     el.createEl("h2", { text: "Smart Note failed" });
-    el.createEl("pre", { text: this.session.error ?? "(no error message)" });
+    el.createEl("pre", { text: msg });
+    if (looksLikeAbort) {
+      const hint = el.createEl("p");
+      hint.textContent =
+        "Looks like Ollama didn't respond in time. If this is the first use after a reboot or long idle, hitting Retry usually works — the model is now loaded into RAM.";
+      hint.style.opacity = "0.8";
+    }
     const row = el.createDiv({ cls: "modal-button-container" });
-    row.createEl("button", { text: "Close", cls: "mod-cta" }).addEventListener(
+    row.createEl("button", { text: "Retry", cls: "mod-cta" }).addEventListener(
+      "click",
+      async () => {
+        this.outcome = "cancelled";
+        this.outcomeError = undefined;
+        this.session = { ...this.session, state: "extract", error: null };
+        this.renderPhase();
+        this.session = await submitCapture(this.session, this.session.transcript || "", {
+          expandMeals: this.expandMeals,
+          expandMenuNumbers: this.expandMenuNumbers,
+          menuIndex: this.expandMenuNumbers ? await this.ensureMenuIndex() : null,
+        });
+        this.renderPhase();
+      },
+    );
+    row.createEl("button", { text: "Back to capture" }).addEventListener(
+      "click",
+      () => {
+        this.outcome = "cancelled";
+        this.outcomeError = undefined;
+        this.session = { ...this.session, state: "awaitCapture", error: null };
+        this.renderPhase();
+      },
+    );
+    row.createEl("button", { text: "Close" }).addEventListener(
       "click",
       () => this.close(),
     );
@@ -484,6 +608,73 @@ export class SmartNoteModal extends Modal {
 
 function humanize(name: string): string {
   return name.replace(/\s+Template$/i, "").toLowerCase();
+}
+
+interface CaptureCopy {
+  heading: string;
+  description: string;
+  placeholder: string;
+}
+
+const CAPTURE_COPY: Record<string, CaptureCopy> = {
+  "Grocery List Template": {
+    heading: "What do you need from the store?",
+    description:
+      "Just name items — I'll sort them into Produce / Meat / Pantry / Frozen / Household. Reference dishes by their Menu Items ID (\"D40\", \"L25, B11\", \"breakfast 11\") with the menu toggle on. Use the meal toggle for ad-hoc dishes not yet in your Menu Items table.",
+    placeholder: "e.g. L25 and D40, plus bananas, bread, paper towels",
+  },
+  "Inventory Template": {
+    heading: "What are you adding to the inventory?",
+    description:
+      "Just name items — I'll put each one under the right section if there are multiple.",
+    placeholder: "e.g. first-aid kit, spare fuses, hand warmers",
+  },
+  "To-Do List Template": {
+    heading: "What's on this to-do list?",
+    description: "Say or type each task. One per line is fine.",
+    placeholder: "e.g. renew truck registration, email bank, drop off donations",
+  },
+  "Trip Packing Checklist Template": {
+    heading: "What are you packing?",
+    description:
+      "Name items — I'll sort them into Clothes / Toiletries / Gear / Documents / etc. if the template has them.",
+    placeholder: "e.g. rain shell, headlamp, passport, two pairs of socks",
+  },
+  "Anger Log Template": {
+    heading: "What happened?",
+    description:
+      "Tell me what triggered it, what you did, what the outcome was, and anything you'd do differently.",
+    placeholder: "e.g. 'Kids fought over the iPad at bedtime; I yelled; everyone cried; next time hide the iPad after 7pm.'",
+  },
+  "Person Template": {
+    heading: "Tell me about this person",
+    description:
+      "Who are they, how do you know them, and anything worth remembering (job, family, interests)?",
+    placeholder: "e.g. 'Dave, neighbor two doors down, runs the HOA, has two kids in middle school, into mountain biking.'",
+  },
+  "Project Template": {
+    heading: "Describe the project",
+    description:
+      "What is it, why does it matter, what's the next concrete action, and when is it due?",
+    placeholder:
+      "e.g. 'Phase 3.8 alerting: ntfy heartbeat for Pi cams + Frigate + Ranch Brain. Due this week. Next: pick the topic name.'",
+  },
+};
+
+const DEFAULT_CAPTURE_COPY: CaptureCopy = {
+  heading: "Tell me about this",
+  description:
+    "Speak freely. Press the mic to record (hold or toggle), or type into the box. Done when ready.",
+  placeholder: "Type here, or use the mic above.",
+};
+
+function captureCopyFor(basename: string): CaptureCopy {
+  const specific = CAPTURE_COPY[basename];
+  if (specific) return specific;
+  return {
+    ...DEFAULT_CAPTURE_COPY,
+    heading: `Tell me about this ${humanize(basename)}`,
+  };
 }
 
 function timeHHmm(): string {

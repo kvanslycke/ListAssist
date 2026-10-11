@@ -2,7 +2,7 @@
 tags: [reference, list-assistant, manual]
 system: List Assistant
 version: 0.1.0
-updated: 2026-09-28
+updated: 2026-10-11
 ---
 
 # List Assistant — User Manual
@@ -265,6 +265,94 @@ trailing wikilink line, `updated:` is bumped, and the rest of the
 file is preserved. If the month's file doesn't exist yet, Smart
 Note creates it from the template with the first entry inside.
 
+### Grocery mode and menu numbers
+
+Grocery capture has two optional toggles that change how your
+words become list items. Both default off; the baseline behavior
+is "classify what the user said into sections, never invent."
+
+**Toggle 1 — Expand menu numbers from `Reference HUB/Menu Items.md`**
+
+Deterministic lookup from a Kevin-curated recipe table. The file
+has one row per dish, grouped into sections (`B` Breakfast, `L`
+Lunch, `D` Dinner, `DS` Dessert, `S` Snack, `SD` Side, plus the
+Pinterest-sourced `BK` Baking, `MK` Middle Kitchen, `BM` Basement
+Kitchen, `NV` Nearly Vegetarian, `FD` Fondue, `PS` Pinterest
+Sides, `TK` Top Kitchen, `PZ` Pizza). Each row has an Ingredients
+cell in the format `name: qty unit; name: qty unit`.
+
+With the toggle on, you can say any of these forms and Smart Note
+expands them to the dish's ingredients, classifies each into its
+grocery section, and sums same-unit quantities across dishes:
+
+- Compact: `L25`, `D40`, `BK7`, `PZ1`.
+- With a prefix word: `menu L25`, `number D40`, `# D40`.
+- Natural language: `lunch 25`, `dinner 40`, `breakfast 11`,
+  `baking 5`, `fondue 2`, `pizza 1`.
+
+Example utterance: `"D40 and L25, plus bananas, bread, paper
+towels"` →
+- Short-rib ingredients + smash-burger ingredients into Meat /
+  Produce / Pantry / Household sections.
+- Bananas → Produce.
+- Bread → Pantry.
+- Paper towels → Household.
+
+The preview phase shows `From menu: D40 Korean BBQ Short Ribs ·
+L25 Classic Smash Burgers` under the Preview heading, and
+surfaces warnings for any menu ID that was not found or had a
+blank Ingredients cell. **Zero ingredients are invented along
+this path** — the LLM's only job is section classification.
+
+**Toggle 2 — Expand meals into ingredients (LLM guess)**
+
+Opt-in model invention. With this toggle on, Smart Note tells
+Ollama that if the user names a meal, dish, or recipe in free
+text (e.g. "chicken parmesan Thursday"), it may expand it into
+4–8 typical ingredients and classify them. Guardrails:
+
+- Generic ingredient names only (`chicken breast`, not a
+  brand/weight).
+- No duplication of ingredients already named.
+- No invention of dishes the user did not say.
+
+Use this for dishes you have not yet added to Menu Items. If you
+want deterministic behavior, add the dish to the table and use
+Toggle 1 instead.
+
+**Combining both toggles:** menu-number IDs resolve first
+(deterministic). The remainder of the utterance passes to the
+model under the classify-and-maybe-expand prompt. Items you say
+in free text (bananas, bread) classify alongside everything else.
+
+Full operator-level detail — adding dishes, ingredient format
+rules, quantity math, data-quality notes from the Pinterest
+import — lives in
+`SentinelSystem/Smart Note Operators Manual.md` in the vault.
+
+### Error handling (first inference per session is slow)
+
+Gemma 4 e2b on an SP7-class CPU takes 10–60 s to cold-load into
+RAM, then 30–120 s per extraction. Smart Note handles this three
+ways:
+
+1. **Prewarm.** The moment the modal opens, Smart Note fires a
+   1-token no-op `/api/chat` so Ollama loads the model while you
+   are picking a template or typing. First real inference pays
+   only the inference cost, not the load cost.
+2. **Generous timeout.** The per-request abort is 180 s (3 min),
+   and `keep_alive` is 30 min so the model stays resident across
+   back-to-back notes.
+3. **Retry button on error.** If an extraction does fail — stuck
+   model, connection drop, invalid-JSON retry failure — the error
+   screen shows the real error message, hints when it looks like
+   a timeout, and offers three buttons: **Retry** (re-fires the
+   same extraction with the same transcript; usually succeeds
+   because the model is now warm), **Back to capture** (returns
+   to the textarea with your transcript intact), **Close**. The
+   session log records `outcome: "error"` with the actual message
+   so later diagnosis is honest.
+
 ### Ollama-down fallback
 
 If `/api/tags` isn't reachable or `gemma4:e2b` isn't pulled,
@@ -302,7 +390,11 @@ itself to decide which transcriber to run.
 
 ### Settings
 
-Under List Assistant settings → Smart Note:
+Smart Note has no settings pane yet — the List Assistant settings
+tab only exposes Templates, Daily triage and Google Calendar.
+Smart Note values live in
+`.obsidian/plugins/list-assistant/data.json` and are editable with
+any text editor (close Obsidian, edit, reopen). Keys and defaults:
 
 - `smartNoteOllamaUrl` — default `http://localhost:11434`
 - `smartNoteModel` — default `gemma4:e2b`
@@ -310,7 +402,9 @@ Under List Assistant settings → Smart Note:
 - `smartNoteMaxFollowUps` — default `3`
 - `smartNoteTranscriber` — `whisper` / `gemma-experimental` /
   `none`. Default `whisper`.
-- `smartNoteWhisperUrl` — default `http://127.0.0.1:8080/inference`
+- `smartNoteWhisperUrl` — default `http://127.0.0.1:8089/inference`
+  (installer defaults port 8089 to avoid Windows loopback
+  collisions; set with `setup-whisper.ps1 -Port`)
 - `smartNoteWhisperModel` — `base.en` / `small.en`
 - `smartNoteAppendModeTemplates` — default `["Anger Log Template"]`
 - `smartNoteFolderExcludeList` — defaults exclude `.obsidian`,
@@ -318,6 +412,11 @@ Under List Assistant settings → Smart Note:
   `Vault Audits`, `_backups`
 - `smartNoteLastUsedByTemplate` — plugin-maintained memory of
   the folder you picked last time for each template
+
+Building a Smart Note section on the List Assistant settings tab
+is tracked as a backlog item in the Sentinel manual's
+[13 Findings and Recommendations §I.2 / §I.8] and
+[06 SP7 and Field Devices §12].
 
 ### Log
 

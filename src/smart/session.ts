@@ -8,6 +8,14 @@
 import { classifyTemplate, type TemplateSchema, type ClassifiedField } from "./templateSchema";
 import { renderNote, type RenderResult } from "./writer-core";
 import { suggestFolder, tripPackingFolder, type RoutingResult } from "./router";
+import {
+  expandIds,
+  extractMenuIds,
+  formatIngredient,
+  stripMenuIdsFromUtterance,
+  type ExpansionResult,
+  type MenuIndex,
+} from "./menuItems";
 
 export type State =
   | "pickTemplate"
@@ -56,6 +64,8 @@ export interface SessionState {
   followUps: FollowUpQuestion[];
   followUpsAsked: number;
   error: string | null;
+  warnings: string[];
+  menuExpansion: ExpansionResult | null;
 }
 
 export function createSession(deps: SessionDeps): SessionState {
@@ -69,6 +79,8 @@ export function createSession(deps: SessionDeps): SessionState {
     followUps: [],
     followUpsAsked: 0,
     error: null,
+    warnings: [],
+    menuExpansion: null,
   };
 }
 
@@ -149,16 +161,56 @@ function tokenize(s: string): string[] {
 
 // -- Capture + extract -----------------------------------------
 
+export interface CaptureOptions {
+  expandMeals?: boolean;              // Grocery-only: expand named meals into ingredients via the LLM
+  expandMenuNumbers?: boolean;        // Grocery-only: expand menu IDs via Reference HUB/Menu Items.md
+  menuIndex?: MenuIndex | null;       // required when expandMenuNumbers is true
+}
+
 export async function submitCapture(
   session: SessionState,
   transcript: string,
+  opts: CaptureOptions = {},
 ): Promise<SessionState> {
   if (!session.template || !session.schema) {
     return { ...session, state: "error", error: "No template selected" };
   }
   const base = { ...session, transcript, state: "extract" as State };
+  const warnings: string[] = [];
+  let menuExpansion: ExpansionResult | null = null;
+  let promptTranscript = transcript;
+
+  if (opts.expandMenuNumbers === true && opts.menuIndex) {
+    const ids = extractMenuIds(transcript);
+    if (ids.length > 0) {
+      menuExpansion = expandIds(ids, opts.menuIndex);
+      for (const id of menuExpansion.missingIds) {
+        warnings.push(`Menu ID ${id} not found in Reference HUB/Menu Items.md`);
+      }
+      for (const id of menuExpansion.unfilledIds) {
+        warnings.push(`Menu ID ${id} has no ingredients filled in yet`);
+      }
+      const expandedLines = menuExpansion.ingredients
+        .map((i) => `- ${formatIngredient(i)}`)
+        .join("\n");
+      const remainder = stripMenuIdsFromUtterance(transcript);
+      const header =
+        expandedLines.length > 0
+          ? `FROM MENU LOOKUP (please classify each into a grocery section, preserve its quantity text):\n${expandedLines}`
+          : "";
+      const extras = remainder ? `ADDITIONAL ITEMS THE USER MENTIONED:\n${remainder}` : "";
+      promptTranscript = [header, extras].filter((s) => s.length > 0).join("\n\n");
+      if (!promptTranscript) promptTranscript = transcript;
+    }
+  }
+
   try {
-    const prompt = buildExtractionPrompt(session.schema, transcript);
+    const prompt = buildExtractionPrompt(
+      session.schema,
+      promptTranscript,
+      session.template.basename,
+      opts,
+    );
     const resp = await session.deps.chat(prompt);
     const extracted = asRecord(resp.parsed);
     const queue = buildInitialFollowUpQueue(session.schema, extracted, session.deps.maxFollowUps ?? 3);
@@ -167,15 +219,42 @@ export async function submitCapture(
       extracted,
       followUps: queue,
       state: queue.length > 0 ? "followUp" : "review",
+      warnings,
+      menuExpansion,
     };
   } catch (e) {
-    return { ...base, state: "error", error: (e as Error).message };
+    return { ...base, state: "error", error: (e as Error).message, warnings, menuExpansion };
   }
 }
 
-function buildExtractionPrompt(
+// A template is a "list classifier" when it has multiple body sections
+// and most of them are checkbox lists. Those templates get the
+// classify-items prompt instead of the strict no-fabrication prompt,
+// so the user can just name items without saying what section each
+// goes in.
+export function isListClassifierTemplate(schema: TemplateSchema): boolean {
+  if (schema.bodySections.length < 2) return false;
+  let withCheckboxes = 0;
+  for (const sec of schema.bodySections) {
+    if (/^\s*-\s+\[/m.test(sec.content)) withCheckboxes++;
+  }
+  return withCheckboxes >= Math.ceil(schema.bodySections.length / 2);
+}
+
+// For a list-classifier template, pick a sensible catch-all section
+// the model should drop uncertain items into. Grocery => Pantry;
+// otherwise fall back to the first section.
+function defaultSectionFor(basename: string, sections: readonly string[]): string {
+  const name = basename.replace(/\s+Template$/i, "");
+  if (name === "Grocery List" && sections.includes("Pantry")) return "Pantry";
+  return sections[0] ?? "";
+}
+
+export function buildExtractionPrompt(
   schema: TemplateSchema,
   transcript: string,
+  templateBasename: string,
+  opts: CaptureOptions = {},
 ): { messages: Array<{ role: "system" | "user"; content: string }>; format: Record<string, unknown> } {
   const askFields = schema.fields
     .filter((f) => f.class === "ask")
@@ -187,11 +266,43 @@ function buildExtractionPrompt(
   for (const label of inlineLabels) schemaProps[label] = { type: "string" };
   for (const sec of bodySectionNames) schemaProps[sec] = { type: "array", items: { type: "string" } };
   const format = { type: "object", properties: schemaProps, additionalProperties: false };
-  const system =
-    "You extract structured note content from a spoken or typed description. " +
-    "Return JSON that matches the provided schema. Fill fields only with details the user actually said; " +
-    "if the user did not mention something, leave that key out. Never invent facts. " +
-    "Never set `priority` or `Priority Level` — those keys are forbidden.";
+
+  const isClassifier = isListClassifierTemplate(schema);
+  const isGrocery = /grocery/i.test(templateBasename);
+  const expandMeals = opts.expandMeals === true && isGrocery;
+  const defaultSection = defaultSectionFor(templateBasename, bodySectionNames);
+
+  let system: string;
+  if (expandMeals) {
+    system =
+      "You help the user build a grocery list from what they say or type. " +
+      `Each item goes into one of these sections: ${bodySectionNames.join(", ")}. ` +
+      `If a section is uncertain, put the item under ${defaultSection}. ` +
+      "If the user names a meal, dish, or recipe (e.g. \"chicken parmesan\", \"tacos\", \"pot roast for Sunday\"), " +
+      "expand it into 4–8 typical ingredients. Keep ingredient names generic (e.g. \"chicken breast\", not a brand/weight). " +
+      "Classify each ingredient into a section. " +
+      "Never invent ingredients the user did not name or imply through a dish. " +
+      "Never duplicate items: if the same ingredient is already listed, do not add it twice. " +
+      "Non-item fields (like due dates) go in their matching ASK FIELD. " +
+      "Never set `priority` or `Priority Level` — those keys are forbidden. " +
+      "Return JSON matching the provided schema.";
+  } else if (isClassifier) {
+    system =
+      "You help the user build a note from what they say or type. " +
+      `Each item the user names goes into one of these sections: ${bodySectionNames.join(", ")}. ` +
+      `If a section is uncertain, put the item under ${defaultSection}. ` +
+      "Never invent items — only use what the user actually said. " +
+      "Non-item fields (like due dates) go in their matching ASK FIELD. " +
+      "Never set `priority` or `Priority Level` — those keys are forbidden. " +
+      "Return JSON matching the provided schema.";
+  } else {
+    system =
+      "You extract structured note content from a spoken or typed description. " +
+      "Return JSON that matches the provided schema. Fill fields only with details the user actually said; " +
+      "if the user did not mention something, leave that key out. Never invent facts. " +
+      "Never set `priority` or `Priority Level` — those keys are forbidden.";
+  }
+
   const user = `TEMPLATE SECTIONS: ${bodySectionNames.join(", ") || "(none)"}\n` +
     `INLINE FIELDS: ${inlineLabels.join(", ") || "(none)"}\n` +
     `ASK FIELDS: ${askFields.join(", ") || "(none)"}\n\n` +
