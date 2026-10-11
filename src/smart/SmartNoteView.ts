@@ -202,17 +202,23 @@ export class SmartNoteView extends ItemView {
   private renderPickTemplate(el: HTMLElement): void {
     el.createEl("h2", { text: "Smart Note" });
     el.createEl("p", {
-      text: "Say or type the template type: grocery list, person, anger log, project, trip packing, …",
+      text:
+        "Say or type what kind of note you want. Fuzzy matching finds the right template — the full list is below.",
     });
 
     let utterance = "";
-    const utteranceInput = new Setting(el)
+    new Setting(el)
       .setName("Template")
       .addText((t) => {
         t.setPlaceholder("grocery list");
         t.onChange((v) => (utterance = v));
+        t.inputEl.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter") {
+            ev.preventDefault();
+            go.click();
+          }
+        });
       });
-    utteranceInput;
 
     const row = el.createDiv({ cls: "modal-button-container" });
     const go = row.createEl("button", { text: "Continue", cls: "mod-cta" });
@@ -228,6 +234,30 @@ export class SmartNoteView extends ItemView {
     });
     const cancel = row.createEl("button", { text: "Cancel" });
     cancel.addEventListener("click", () => this.detach());
+
+    // Templates it builds — all 14, one terse line each.
+    el.createEl("h3", { text: `Templates it builds (${TEMPLATE_SUMMARIES.length})` });
+    const tplList = el.createEl("ul");
+    tplList.style.lineHeight = "1.5";
+    for (const t of TEMPLATE_SUMMARIES) {
+      const li = tplList.createEl("li");
+      li.createEl("strong", { text: t.name });
+      li.appendText(" — ");
+      li.appendText(t.what);
+      if (t.aliases) {
+        const al = li.createEl("span");
+        al.style.opacity = "0.7";
+        al.textContent = `  Aliases: ${t.aliases}.`;
+      }
+    }
+
+    // Capabilities — what the tool does regardless of template.
+    el.createEl("h3", { text: "What it does" });
+    const capList = el.createEl("ul");
+    capList.style.lineHeight = "1.5";
+    for (const line of CAPABILITY_LINES) {
+      capList.createEl("li", { text: line });
+    }
   }
 
   private expandMeals = false;
@@ -651,6 +681,106 @@ export class SmartNoteView extends ItemView {
 function humanize(name: string): string {
   return name.replace(/\s+Template$/i, "").toLowerCase();
 }
+
+interface TemplateSummary {
+  name: string;
+  what: string;
+  aliases?: string;
+}
+
+// Every template Smart Note knows how to drive. Shown on the pick
+// screen so the user never has to guess what's available. Order
+// matches the alphabetical sort of basenames in `Templates HUB/`.
+const TEMPLATE_SUMMARIES: readonly TemplateSummary[] = [
+  {
+    name: "Anger Log",
+    what: "monthly append file (Anger Log <Month YYYY>.md) — asks what triggered it, what you did, outcome, and notes for next time.",
+    aliases: "anger, mad, lost it",
+  },
+  {
+    name: "Auto Maintenance Checklist",
+    what: "car/vehicle maintenance by category.",
+    aliases: "auto, car, vehicle, maintenance",
+  },
+  {
+    name: "Daily Note",
+    what: "today's date as the title; free-form prose body.",
+    aliases: "daily",
+  },
+  {
+    name: "Grocery List",
+    what: "classifies items into Produce / Meat / Pantry / Frozen / Household. Toggle on \"Expand menu numbers\" to look up dishes by ID from Reference HUB/Menu Items.md (D40, L25, breakfast 11, etc.). Toggle on \"Expand meals\" to let the model guess ingredients for a dish name you give it in free text.",
+    aliases: "grocery, groceries, shopping, food",
+  },
+  {
+    name: "Inventory",
+    what: "classifier mode when the template has multiple sections; otherwise a plain list.",
+    aliases: "inventory",
+  },
+  {
+    name: "List",
+    what: "generic multi-section list; sections and routing depend on your template.",
+    aliases: "list",
+  },
+  {
+    name: "Menu",
+    what: "day-of-eating template (Breakfast / Lunch / Snack 1 / Dinner / Snack 2 / Dessert); classifier when sections are populated.",
+    aliases: "menu",
+  },
+  {
+    name: "Note",
+    what: "baseline capture; one body, one Links section, no required fields.",
+    aliases: "note",
+  },
+  {
+    name: "Person",
+    what: "asks relationship; routes to People HUB.",
+    aliases: "person",
+  },
+  {
+    name: "Plan Of The Day",
+    what: "timed daily plan.",
+    aliases: "pod, plan, plan of the day",
+  },
+  {
+    name: "Project",
+    what: "asks next-action; routing based on the hub you pick in the preview.",
+    aliases: "project",
+  },
+  {
+    name: "Rapids System",
+    what: "asks rapids-class (1–5); routes to Daily Priorities / Plans.",
+    aliases: "rapids, class, routine",
+  },
+  {
+    name: "To-Do List",
+    what: "flat task list; classifier when the template has multiple sections.",
+    aliases: "to-do, todo, to do",
+  },
+  {
+    name: "Trip Packing Checklist",
+    what: "classifier mode by category; asks destination; title becomes \"<Destination> Packing List\".",
+    aliases: "packing, pack, trip",
+  },
+];
+
+// What Smart Note itself can do, regardless of template.
+const CAPABILITY_LINES: readonly string[] = [
+  "Local LLM extraction via Ollama + gemma4:e4b (loopback only — nothing leaves this laptop).",
+  "Voice capture via whisper.cpp — press the mic to record (hold or toggle). Keyboard works too if the mic isn't set up.",
+  "Fuzzy template matching with aliases, so saying \"groceries\" picks Grocery List, \"lost it\" picks Anger Log, etc.",
+  "Up to 3 follow-up questions for required fields the model couldn't fill from your capture.",
+  "Preview phase before save: editable title, folder dropdown (with the reason it was picked), tag chips, hub-link toggle, full body as a textarea.",
+  "Hub-link auto-insertion under ## Notes in the target hub's Main note (or ## Projects for a Project).",
+  "Collision-free filenames: a duplicate becomes name (2).md, name (3).md, …",
+  "Anger Log append-mode: one entry per capture appended into the current month's file; the plugin creates the monthly file on first use.",
+  "Pre-filled template items stay verbatim; sections you didn't mention keep their empty checkbox placeholders. No fabrication.",
+  "priority: is never written — the hard-rule guard enforces this on every save. Set priority at daily triage.",
+  "Tag enum enforced against Reference HUB/Tags.md. A model-proposed new tag surfaces as an unchecked checkbox in the preview; only if you check it does it land in Tags.md.",
+  "Date resolution in code: \"next Friday\", \"tomorrow\", \"the 15th\" are resolved against today in America/Denver — not guessed by the model.",
+  "Retry button on error: a timeout usually succeeds on retry because the model is now warm.",
+  "Session log at .obsidian/plugins/list-assistant/smart-note-log.jsonl records template, folder, follow-up counts, latency, and outcome. No note content is ever logged.",
+];
 
 interface CaptureCopy {
   heading: string;
