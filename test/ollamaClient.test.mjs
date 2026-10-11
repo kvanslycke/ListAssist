@@ -30,11 +30,11 @@ function mockFetch(sequence) {
 
 test("healthCheck returns models and modelPresent=true when listed", async () => {
   const { impl } = mockFetch([
-    fakeResponse(200, { models: [{ name: "gemma4:e2b" }, { name: "llama3:8b" }] }),
+    fakeResponse(200, { models: [{ name: "gemma4:e4b" }, { name: "llama3:8b" }] }),
   ]);
   const h = await healthCheck({ ...DEFAULT_CONFIG, fetchImpl: impl });
   assert.equal(h.ok, true);
-  assert.deepEqual(h.models, ["gemma4:e2b", "llama3:8b"]);
+  assert.deepEqual(h.models, ["gemma4:e4b", "llama3:8b"]);
   assert.equal(h.modelPresent, true);
 });
 
@@ -74,7 +74,7 @@ test("chat returns parsed JSON on first try", async () => {
   assert.deepEqual(r.parsed, { name: "foo", value: 42 });
   // Verify request shape
   const body = JSON.parse(calls[0].body);
-  assert.equal(body.model, "gemma4:e2b");
+  assert.equal(body.model, "gemma4:e4b");
   assert.equal(body.stream, false);
   assert.equal(body.keep_alive, "15m");
   assert.equal(body.options.temperature, 0.2);

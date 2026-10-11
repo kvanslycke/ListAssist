@@ -68,7 +68,7 @@ export const DEFAULT_SETTINGS: ListAssistantSettings = {
   auditHubExemptTags: ["hub", "index", "moc"],
 
   smartNoteOllamaUrl: "http://localhost:11434",
-  smartNoteModel: "gemma4:e2b",
+  smartNoteModel: "gemma4:e4b",
   smartNoteTemperature: 0.2,
   smartNoteMaxFollowUps: 3,
   smartNoteTranscriber: "whisper",

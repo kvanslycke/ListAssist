@@ -40,7 +40,7 @@ Pro and (partially) on Android. Zero-cost. Does six things:
 | Capability | Trigger | Result |
 |---|---|---|
 | Template walkthrough | Ribbon `file-plus` or cmd | Modal prompts for each frontmatter field with an empty value or `{{placeholder}}`, writes the new note |
-| **Smart Note mode** | Ribbon `mic` or cmd | Fuzzy-match a template by voice/typing, extract fields from one freeform description via local Ollama + gemma4:e2b, up to 3 follow-ups, previewed before save. Fully offline. Falls back to the standard walkthrough when Ollama is down. |
+| **Smart Note mode** | Ribbon `mic` or cmd | Fuzzy-match a template by voice/typing, extract fields from one freeform description via local Ollama + gemma4:e4b, up to 3 follow-ups, previewed before save. Fully offline. Falls back to the standard walkthrough when Ollama is down. |
 | Daily Eisenhower triage | Ribbon `list-checks` or cmd | Scans every note with `priority:` set, groups by quadrant, writes `Daily Priorities\YYYY-MM-DD.md` |
 | Google Calendar sync | Ribbon `calendar-sync` or cmd | Notes with `priority: q1` + `due:` become 16:00–17:00 events; `q2` become all-day reminders 3 days before; Plan of the Day with `rapids-class` fires the full timed chain |
 | Vault audit | Ribbon `search-check` or cmd | Nine deterministic checks: untagged notes, broken wikilinks, stubs, duplicates, orphans, sinks, unlinked mentions, entities without a note, URLs without a note. Writes `Vault Audits\YYYY-MM-DD.md`. Never edits notes |
@@ -209,17 +209,21 @@ Full spec in [`FRONTMATTER.md`](FRONTMATTER.md).
 
 Turns a spoken or typed description into a fully formatted,
 tagged, linked note built from one of your templates. Fully
-offline: local [Ollama](https://ollama.com) running `gemma4:e2b`,
+offline: local [Ollama](https://ollama.com) running `gemma4:e4b`,
 plus [whisper.cpp](https://github.com/ggerganov/whisper.cpp) for
-voice. No cloud APIs.
+voice. No cloud APIs. Prior default was `gemma4:e2b` (~4.6 GB,
+faster); e4b (~6.6 GB) is slower but classifies grocery items and
+extracts frontmatter more reliably. You can switch between them
+any time by editing `smartNoteModel` in `data.json`.
 
 ### One-time setup
 
 1. **Install Ollama**: download `OllamaSetup.exe` from
    https://ollama.com/download and run it. The installer sets up
    Ollama as a background service on `http://localhost:11434`.
-2. **Pull the model**: in PowerShell, run `ollama pull gemma4:e2b`
-   (~3.5 GB).
+2. **Pull the model**: in PowerShell, run `ollama pull gemma4:e4b`
+   (~6.6 GB). The lighter `gemma4:e2b` (~4.6 GB) also works; set
+   whichever you want in `data.json`'s `smartNoteModel`.
 3. **(Optional, recommended) Install whisper.cpp for voice**: from
    this repo, run `windows\setup-whisper.ps1`. Pass
    `-RegisterLoginTask` to start the whisper server at login.
@@ -355,9 +359,9 @@ ways:
 
 ### Ollama-down fallback
 
-If `/api/tags` isn't reachable or `gemma4:e2b` isn't pulled,
-Smart Note shows a Notice ("Ollama not running — using standard
-walkthrough") and opens the regular "Create note from template"
+If `/api/tags` isn't reachable or the configured `smartNoteModel`
+isn't pulled, Smart Note shows a Notice ("Ollama not running — using
+standard walkthrough") and opens the regular "Create note from template"
 modal in its place. The standard walkthrough is untouched.
 
 ### Benchmark command
@@ -397,7 +401,7 @@ Smart Note values live in
 any text editor (close Obsidian, edit, reopen). Keys and defaults:
 
 - `smartNoteOllamaUrl` — default `http://localhost:11434`
-- `smartNoteModel` — default `gemma4:e2b`
+- `smartNoteModel` — default `gemma4:e4b` (prior default `gemma4:e2b` is ~2× faster but less accurate; both work)
 - `smartNoteTemperature` — default `0.2`
 - `smartNoteMaxFollowUps` — default `3`
 - `smartNoteTranscriber` — `whisper` / `gemma-experimental` /

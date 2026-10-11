@@ -10,7 +10,7 @@ export type FetchFn = (
 
 export interface OllamaConfig {
   baseUrl: string;        // default "http://localhost:11434"
-  model: string;          // default "gemma4:e2b"
+  model: string;          // default "gemma4:e4b"
   temperature: number;    // default 0.2
   numCtx: number;         // default 8192
   keepAlive: string;      // default "15m"
@@ -20,14 +20,15 @@ export interface OllamaConfig {
 
 export const DEFAULT_CONFIG: Omit<OllamaConfig, "fetchImpl"> = {
   baseUrl: "http://localhost:11434",
-  model: "gemma4:e2b",
+  model: "gemma4:e4b",
   temperature: 0.2,
   numCtx: 8192,
   keepAlive: "30m",
-  // Gemma 4 e2b on SP7 CPU: cold load ~45-60 s, extraction ~30-120 s.
-  // 180 s covers both; keep_alive stops the model from being evicted
-  // between back-to-back sessions.
-  timeoutMs: 180000,
+  // Gemma 4 e4b on SP7 CPU: cold load ~60-90 s, extraction ~120-240 s.
+  // 300 s covers both; keep_alive stops the model from being evicted
+  // between back-to-back sessions. (e2b runs ~2x faster but
+  // classifies grocery items and extracts frontmatter less reliably.)
+  timeoutMs: 300000,
 };
 
 // POST a trivial no-op chat so Ollama loads the model into RAM. The

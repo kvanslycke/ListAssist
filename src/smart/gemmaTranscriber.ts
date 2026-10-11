@@ -9,7 +9,7 @@ import { Transcriber, TranscriberError } from "./transcriber";
 
 export interface GemmaTranscriberConfig {
   baseUrl: string;     // e.g. "http://localhost:11434"
-  model: string;       // e.g. "gemma4:e2b"
+  model: string;       // e.g. "gemma4:e4b"
   timeoutMs?: number;  // default 180000 — generous because quality is iffy
 }
 
