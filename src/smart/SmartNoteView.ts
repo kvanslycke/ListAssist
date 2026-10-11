@@ -1,15 +1,19 @@
-// Chat-style modal driving the Smart Note session end to end. Phases:
+// Chat-style tab view driving the Smart Note session end to end. Phases:
 //   1. Template pick (fuzzy, surfaces top-3 for ambiguous input)
 //   2. Capture (mic hold-to-talk + toggle, or type)
 //   3. Extraction + up to maxFollowUps follow-ups
 //   4. Preview (editable markdown, tag chips, folder dropdown, hub
 //      link checkbox, Save / Back / Cancel)
 //
-// If Ollama health-check fails at open, the modal closes immediately
-// after a Notice and the plugin falls back to the existing
-// create-note-modal — see commands.ts in step 12.
+// Opened as a workspace tab (ItemView) rather than a modal so the
+// session doesn't block the vault — you can scroll notes, pop into
+// settings, come back and your transcript is still here. If Ollama's
+// health-check fails at command-trigger time, the view never opens;
+// the plugin falls back to the existing create-note-modal.
 
-import { App, Modal, Notice, Setting, TFile, TFolder } from "obsidian";
+import { ItemView, Notice, Setting, TFile, TFolder, WorkspaceLeaf } from "obsidian";
+
+export const VIEW_TYPE_SMART_NOTE = "list-assistant-smart-note";
 import type ListAssistantPlugin from "../main";
 import {
   createSession,
@@ -21,7 +25,7 @@ import {
   type SessionState,
   type TemplateRef,
 } from "./session";
-import { chat as ollamaChat, DEFAULT_CONFIG as OLLAMA_DEFAULTS, prewarmModel, type OllamaConfig } from "./ollamaClient";
+import { chat as ollamaChat, DEFAULT_CONFIG as OLLAMA_DEFAULTS, prewarmModel, healthCheck, type OllamaConfig } from "./ollamaClient";
 import { AudioCapture } from "./audioCapture";
 import { WhisperTranscriber, whisperHealth } from "./whisperTranscriber";
 import { GemmaTranscriber } from "./gemmaTranscriber";
@@ -52,25 +56,59 @@ export interface SmartNoteModalOptions {
   maxFollowUps: number;
 }
 
-export class SmartNoteModal extends Modal {
-  private session: SessionState;
+export class SmartNoteView extends ItemView {
+  private session!: SessionState;
   private transcriber: Transcriber | null = null;
   private capture = new AudioCapture();
   private readonly plugin: ListAssistantPlugin;
-  private readonly opts: SmartNoteModalOptions;
-  private readonly openedAt = performance.now();
+  private opts!: SmartNoteModalOptions;
+  private openedAt = performance.now();
   private followUpsAnswered = 0;
   private outcome: "saved" | "cancelled" | "error" = "cancelled";
   private outcomeError: string | undefined;
 
-  constructor(app: App, plugin: ListAssistantPlugin, opts: SmartNoteModalOptions) {
-    super(app);
+  constructor(leaf: WorkspaceLeaf, plugin: ListAssistantPlugin) {
+    super(leaf);
     this.plugin = plugin;
-    this.opts = opts;
+  }
+
+  getViewType(): string {
+    return VIEW_TYPE_SMART_NOTE;
+  }
+
+  getDisplayText(): string {
+    return "Smart Note";
+  }
+
+  getIcon(): string {
+    return "mic";
+  }
+
+  // Called by the command when the user re-triggers Smart Note on an
+  // already-open tab that's in a finished state. Resets the session so
+  // the user starts fresh. If called while mid-session, reveals the
+  // tab without resetting (preserves the transcript).
+  resetIfFinished(): void {
+    if (this.session && (this.session.state === "done" || this.session.state === "error")) {
+      this.initSession();
+      this.renderPhase();
+    }
+  }
+
+  private initSession(): void {
+    this.opts = modalOptionsFromSettings(this.plugin);
     this.transcriber = this.buildTranscriber();
+    this.openedAt = performance.now();
+    this.followUpsAnswered = 0;
+    this.outcome = "cancelled";
+    this.outcomeError = undefined;
+    this.expandMeals = false;
+    this.expandMenuNumbers = false;
+    this.menuIndex = null;
+    this.lastFolderChoice = "";
 
     const chatFn: ChatFn = async (req) => {
-      const r = await ollamaChat(opts.ollama, req);
+      const r = await ollamaChat(this.opts.ollama, req);
       return { parsed: r.parsed, retried: r.retried };
     };
     const templates = this.loadTemplates();
@@ -79,7 +117,7 @@ export class SmartNoteModal extends Modal {
       chat: chatFn,
       nowISODate: () => todayISO(),
       nowISOTime: () => timeHHmm(),
-      maxFollowUps: opts.maxFollowUps,
+      maxFollowUps: this.opts.maxFollowUps,
       folderEnum: this.listPickableFolders(),
       lastUsedByTemplate: new Map(
         Object.entries(this.plugin.settings.smartNoteLastUsedByTemplate ?? {}),
@@ -87,18 +125,29 @@ export class SmartNoteModal extends Modal {
     });
   }
 
-  onOpen(): void {
+  async onOpen(): Promise<void> {
+    this.initSession();
+    // Async-load template bodies so the schema classifier has real
+    // content to work with. The sync loadTemplates() above returns
+    // refs with raw="".
+    for (const t of this.session.deps.templates) {
+      const file = this.app.vault.getAbstractFileByPath(t.path);
+      if (file instanceof TFile) {
+        t.raw = await this.app.vault.cachedRead(file);
+      }
+    }
     this.renderPhase();
     // Prewarm Ollama in the background while the user picks a template
     // and types. The first inference per session otherwise pays the
-    // full model-load cost (~45-60 s cold on SP7 CPU).
+    // full model-load cost (~60-90 s cold on SP7 CPU for e4b).
     prewarmModel(this.opts.ollama).catch(() => {
       // best-effort; the real call will surface errors
     });
   }
 
-  onClose(): void {
+  async onClose(): Promise<void> {
     this.contentEl.empty();
+    if (!this.session) return;
     const entry: SmartNoteLogEntry = {
       timestamp: new Date().toISOString(),
       template: this.session.template?.basename ?? "",
@@ -117,6 +166,10 @@ export class SmartNoteModal extends Modal {
         /* logger is best-effort */
       });
     }
+  }
+
+  private detach(): void {
+    this.leaf.detach();
   }
 
   private lastFolderChoice = "";
@@ -138,7 +191,7 @@ export class SmartNoteModal extends Modal {
       case "writing":
         return this.renderStatus(contentEl, "Saving…");
       case "done":
-        return this.close();
+        return this.detach();
       case "error":
         return this.renderError(contentEl);
     }
@@ -174,7 +227,7 @@ export class SmartNoteModal extends Modal {
       this.renderPhase();
     });
     const cancel = row.createEl("button", { text: "Cancel" });
-    cancel.addEventListener("click", () => this.close());
+    cancel.addEventListener("click", () => this.detach());
   }
 
   private expandMeals = false;
@@ -291,7 +344,7 @@ export class SmartNoteModal extends Modal {
     });
 
     const cancel = row.createEl("button", { text: "Cancel" });
-    cancel.addEventListener("click", () => this.close());
+    cancel.addEventListener("click", () => this.detach());
   }
 
   private renderFollowUp(el: HTMLElement): void {
@@ -324,7 +377,7 @@ export class SmartNoteModal extends Modal {
       this.session = answerFollowUp(this.session, "done");
       this.renderPhase();
     });
-    row.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close());
+    row.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.detach());
   }
 
   private renderReview(el: HTMLElement): void {
@@ -429,7 +482,7 @@ export class SmartNoteModal extends Modal {
         const leaf = this.app.workspace.getLeaf(false);
         if (outcome.file instanceof TFile) await leaf.openFile(outcome.file);
         this.outcome = "saved";
-        this.close();
+        this.detach();
       } catch (e) {
         this.outcome = "error";
         this.outcomeError = (e as Error).message;
@@ -442,7 +495,7 @@ export class SmartNoteModal extends Modal {
       this.session = { ...this.session, state: "followUp" };
       this.renderPhase();
     });
-    row.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close());
+    row.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.detach());
   }
 
   private renderStatus(el: HTMLElement, text: string): void {
@@ -493,7 +546,7 @@ export class SmartNoteModal extends Modal {
     );
     row.createEl("button", { text: "Close" }).addEventListener(
       "click",
-      () => this.close(),
+      () => this.detach(),
     );
   }
 
@@ -542,17 +595,6 @@ export class SmartNoteModal extends Modal {
     // In practice obsidian's TFile has no sync read API; the modal's
     // open() does the async load via async loadTemplates() below.
     return "";
-  }
-
-  // Async template load — called in onOpen before renderPhase.
-  async loadAndEnter(): Promise<void> {
-    for (const t of this.session.deps.templates) {
-      const file = this.app.vault.getAbstractFileByPath(t.path);
-      if (file instanceof TFile) {
-        t.raw = await this.app.vault.cachedRead(file);
-      }
-    }
-    this.open();
   }
 
   private listPickableFolders(): string[] {
@@ -703,13 +745,30 @@ function monthName(isoDate: string): string {
   return MONTH_NAMES[m - 1] ?? "";
 }
 
+// Build an OllamaConfig / transcriber-kind bundle from current settings.
+// Lives here (rather than in commands.ts) so SmartNoteView.initSession
+// can rebuild options on every reopen without a circular import.
+export function modalOptionsFromSettings(plugin: ListAssistantPlugin): SmartNoteModalOptions {
+  const s = plugin.settings;
+  return {
+    ollama: {
+      ...OLLAMA_DEFAULTS,
+      baseUrl: s.smartNoteOllamaUrl,
+      model: s.smartNoteModel,
+      temperature: s.smartNoteTemperature,
+    },
+    transcriberKind: s.smartNoteTranscriber,
+    whisperUrl: s.smartNoteWhisperUrl,
+    maxFollowUps: s.smartNoteMaxFollowUps,
+  };
+}
+
 // Health check wrapper for the plugin's command handler.
 export async function smartNoteCanOpen(opts: {
   ollama: OllamaConfig;
   transcriberKind: SmartNoteModalOptions["transcriberKind"];
   whisperUrl: string;
 }): Promise<{ ollamaOk: boolean; transcriberOk: boolean; models: string[] }> {
-  const { healthCheck } = await import("./ollamaClient");
   const h = await healthCheck(opts.ollama);
   const transcriberOk = opts.transcriberKind === "none"
     ? true

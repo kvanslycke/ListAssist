@@ -12,12 +12,21 @@ import { CalendarClient } from "./calendar";
 import { syncCalendar } from "./sync";
 import { runAndWrite as runAndWriteAudit } from "./audit";
 import { openSmartNote, benchmarkTranscribers } from "./smart/commands";
+import { SmartNoteView, VIEW_TYPE_SMART_NOTE } from "./smart/SmartNoteView";
 
 export default class ListAssistantPlugin extends Plugin {
   settings!: ListAssistantSettings;
 
   async onload(): Promise<void> {
     await this.loadSettings();
+
+    // Register the Smart Note tab view before any command that opens
+    // it. The leaf factory captures this plugin reference; opts come
+    // from settings at open-time, inside SmartNoteView.initSession.
+    this.registerView(
+      VIEW_TYPE_SMART_NOTE,
+      (leaf) => new SmartNoteView(leaf, this),
+    );
 
     this.addCommand({
       id: "create-note-from-template",
@@ -114,7 +123,11 @@ export default class ListAssistantPlugin extends Plugin {
     this.addSettingTab(new ListAssistantSettingTab(this.app, this));
   }
 
-  onunload(): void {}
+  onunload(): void {
+    // Detach any open Smart Note views so the leaf doesn't try to
+    // call into the plugin after unload.
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE_SMART_NOTE);
+  }
 
   async loadSettings(): Promise<void> {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());

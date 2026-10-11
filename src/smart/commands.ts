@@ -1,20 +1,24 @@
 // Command handlers for Smart Note. Called from main.ts.
 //
-// - smart-note-from-template: health-check Ollama; open the Smart
-//   Note modal when it's up, or fall back to the existing
-//   "Create note from template" walkthrough with a Notice.
+// - smart-note-from-template: health-check Ollama; open (or reveal)
+//   the Smart Note tab view when it's up, or fall back to the
+//   existing "Create note from template" walkthrough with a Notice.
 // - benchmark-transcribers: record 10 s and report latency + text
 //   from whisper and Gemma side by side.
 
-import { App, Notice, TFile, TFolder } from "obsidian";
+import { Notice, TFile, TFolder } from "obsidian";
 import type ListAssistantPlugin from "../main";
-import { SmartNoteModal, smartNoteCanOpen, type SmartNoteModalOptions } from "./SmartNoteModal";
+import {
+  SmartNoteView,
+  VIEW_TYPE_SMART_NOTE,
+  smartNoteCanOpen,
+  modalOptionsFromSettings,
+} from "./SmartNoteView";
 import { TemplatePickerModal } from "../template-picker";
 import { CreateNoteModal } from "../create-note-modal";
 import { AudioCapture } from "./audioCapture";
 import { WhisperTranscriber, whisperHealth } from "./whisperTranscriber";
 import { GemmaTranscriber } from "./gemmaTranscriber";
-import { DEFAULT_CONFIG as OLLAMA_DEFAULTS } from "./ollamaClient";
 
 export async function openSmartNote(plugin: ListAssistantPlugin): Promise<void> {
   const opts = modalOptionsFromSettings(plugin);
@@ -31,9 +35,20 @@ export async function openSmartNote(plugin: ListAssistantPlugin): Promise<void> 
     openStandardWalkthrough(plugin);
     return;
   }
-  const modal = new SmartNoteModal(plugin.app, plugin, opts);
-  await preloadTemplatesIntoModal(plugin.app, modal);
-  modal.open();
+  const workspace = plugin.app.workspace;
+  const existing = workspace.getLeavesOfType(VIEW_TYPE_SMART_NOTE);
+  let leaf = existing[0];
+  if (!leaf) {
+    leaf = workspace.getLeaf("tab");
+    await leaf.setViewState({ type: VIEW_TYPE_SMART_NOTE, active: true });
+  }
+  workspace.revealLeaf(leaf);
+  // If the user re-triggers Smart Note on a tab that's already finished,
+  // reset the session so they start fresh. Mid-session state is kept.
+  const view = leaf.view;
+  if (view instanceof SmartNoteView) {
+    view.resetIfFinished();
+  }
 }
 
 export function openStandardWalkthrough(plugin: ListAssistantPlugin): void {
@@ -64,32 +79,7 @@ function getTemplateFiles(plugin: ListAssistantPlugin): TFile[] {
   return out;
 }
 
-async function preloadTemplatesIntoModal(app: App, modal: SmartNoteModal): Promise<void> {
-  // The modal was constructed with placeholder raw="" strings. Read
-  // each template file's content now so the session can classify them.
-  const session = (modal as unknown as { session: { deps: { templates: Array<{ path: string; raw: string }> } } }).session;
-  for (const t of session.deps.templates) {
-    const file = app.vault.getAbstractFileByPath(t.path);
-    if (file instanceof TFile) {
-      t.raw = await app.vault.cachedRead(file);
-    }
-  }
-}
-
-export function modalOptionsFromSettings(plugin: ListAssistantPlugin): SmartNoteModalOptions {
-  const s = plugin.settings;
-  return {
-    ollama: {
-      ...OLLAMA_DEFAULTS,
-      baseUrl: s.smartNoteOllamaUrl,
-      model: s.smartNoteModel,
-      temperature: s.smartNoteTemperature,
-    },
-    transcriberKind: s.smartNoteTranscriber,
-    whisperUrl: s.smartNoteWhisperUrl,
-    maxFollowUps: s.smartNoteMaxFollowUps,
-  };
-}
+export { modalOptionsFromSettings };
 
 // Benchmark: record 10 s, feed into both whisper and gemma, report
 // latency + text. Prints to console AND a Notice.
