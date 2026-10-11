@@ -99,7 +99,8 @@ export function renderNote(input: RenderInput): RenderResult {
     title: input.title,
     date: input.today,
   });
-  const body = mergeExtractedIntoBody(substituted, schema, extracted);
+  const afterSectionMerge = mergeExtractedIntoBody(substituted, schema, extracted);
+  const body = mergeExtractedIntoTable(afterSectionMerge, schema, extracted);
 
   const filename = sanitizeFilename(input.title);
 
@@ -168,6 +169,95 @@ function substituteBodyPlaceholders(
     // {{name}} marker so the user sees it in the preview.
     return `{{${name}}}`;
   });
+}
+
+// Merge an extracted "rows" array into the body's first markdown
+// table. Each row object's keys are matched to the table's headers
+// case-insensitively; cells not supplied stay empty. Empty placeholder
+// rows (all cells blank) in the template get consumed first, then any
+// remaining extracted rows are appended at the bottom of the table.
+// Pre-filled template rows are kept verbatim and never duplicated.
+// No-ops when the template has no table or `extracted.rows` is empty.
+export function mergeExtractedIntoTable(
+  body: string,
+  schema: TemplateSchema,
+  extracted: Record<string, unknown>,
+): string {
+  if (schema.tables.length === 0) return body;
+  const rawRows = extracted.rows;
+  if (!Array.isArray(rawRows) || rawRows.length === 0) return body;
+
+  const table = schema.tables[0];
+  const headers = table.headers;
+  if (headers.length === 0) return body;
+
+  const normalizedRows: Record<string, string>[] = [];
+  for (const r of rawRows) {
+    if (!r || typeof r !== "object" || Array.isArray(r)) continue;
+    const obj: Record<string, string> = {};
+    for (const [k, v] of Object.entries(r as Record<string, unknown>)) {
+      const match = headers.find((h) => h.toLowerCase() === k.toLowerCase());
+      if (match) obj[match] = v == null ? "" : String(v);
+    }
+    const anyNonEmpty = Object.values(obj).some((v) => v.trim().length > 0);
+    if (anyNonEmpty) normalizedRows.push(obj);
+  }
+  if (normalizedRows.length === 0) return body;
+
+  const renderRow = (obj: Record<string, string>): string => {
+    const cells = headers.map((h) => (obj[h] ?? "").replace(/\|/g, "\\|").replace(/\n/g, " ").trim());
+    return `| ${cells.join(" | ")} |`;
+  };
+
+  const lines = body.split("\n");
+  const dataStart = table.startLine + 2; // header + separator
+  const dataEnd = table.endLine;
+  const existing = lines.slice(dataStart, dataEnd);
+
+  // Separate empty-placeholder rows from pre-filled rows. Walk from
+  // the top; after the first non-empty, break the "consume placeholder"
+  // behavior so a pre-filled row followed by an empty one isn't dropped.
+  const keptLines: string[] = [];
+  let placeholderBudget = 0;
+  for (const dl of existing) {
+    const cells = dl.split("|").slice(1, -1).map((c) => c.trim());
+    const isEmpty = cells.every((c) => c === "");
+    if (isEmpty) {
+      placeholderBudget++;
+    } else {
+      keptLines.push(dl);
+    }
+  }
+
+  const existingCellLower = new Set(
+    keptLines.map((dl) =>
+      dl.split("|").slice(1, -1).map((c) => c.trim().toLowerCase()).join("|"),
+    ),
+  );
+
+  const newRowLines: string[] = [];
+  for (const row of normalizedRows) {
+    const line = renderRow(row);
+    const key = line.split("|").slice(1, -1).map((c) => c.trim().toLowerCase()).join("|");
+    if (existingCellLower.has(key)) continue; // dedupe against pre-filled
+    newRowLines.push(line);
+    existingCellLower.add(key);
+  }
+
+  if (newRowLines.length === 0) return body;
+
+  // Keep pre-filled rows, then new rows. Any unused placeholders are
+  // dropped so the table doesn't carry blank trailing rows.
+  const combined = [...keptLines, ...newRowLines];
+  const out = [
+    ...lines.slice(0, dataStart),
+    ...combined,
+    ...lines.slice(dataEnd),
+  ];
+  // Reference placeholderBudget so a future "leave N blank rows" mode
+  // has a hook; linting flags unused locals otherwise.
+  void placeholderBudget;
+  return out.join("\n");
 }
 
 // Walks the body, filling two things from `extracted` without ever

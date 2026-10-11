@@ -714,7 +714,7 @@ const TEMPLATE_SUMMARIES: readonly TemplateSummary[] = [
   },
   {
     name: "Inventory",
-    what: "classifier mode when the template has multiple sections; otherwise a plain list.",
+    what: "table-mode (Item / Quantity / Location / Notes / Assignment columns). Each item you name becomes one row; columns you skip stay blank. Empty placeholder rows in the template get consumed first; pre-filled rows are preserved.",
     aliases: "inventory",
   },
   {
@@ -798,8 +798,8 @@ const CAPTURE_COPY: Record<string, CaptureCopy> = {
   "Inventory Template": {
     heading: "What are you adding to the inventory?",
     description:
-      "Just name items — I'll put each one under the right section if there are multiple.",
-    placeholder: "e.g. first-aid kit, spare fuses, hand warmers",
+      "Say each item with whatever you know about it — quantity, where it is, notes, who it belongs to. I'll put each item on its own row of the Item / Quantity / Location / Notes / Assignment table. Columns you skip stay blank.",
+    placeholder: "e.g. '3 shovels in the shed at the ranch; a half-full 20-gal propane tank on the balcony for cookouts; two first-aid kits — one in the Tacoma, one at home.'",
   },
   "To-Do List Template": {
     heading: "What's on this to-do list?",

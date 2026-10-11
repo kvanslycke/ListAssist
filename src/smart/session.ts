@@ -265,6 +265,23 @@ export function buildExtractionPrompt(
   for (const k of askFields) schemaProps[k] = { type: "string" };
   for (const label of inlineLabels) schemaProps[label] = { type: "string" };
   for (const sec of bodySectionNames) schemaProps[sec] = { type: "array", items: { type: "string" } };
+
+  // Table-mode: when the template has a table and no body sections,
+  // ask the model for an array of row objects whose keys match the
+  // table headers. The writer merges each row into the body's first
+  // table. Templates with BOTH sections and tables keep the section
+  // path and ignore the table (first-table merge is deferred).
+  const isTableTemplate = schema.tables.length > 0 && bodySectionNames.length === 0;
+  const tableHeaders = isTableTemplate ? schema.tables[0].headers : [];
+  if (isTableTemplate) {
+    const rowProps: Record<string, unknown> = {};
+    for (const h of tableHeaders) rowProps[h] = { type: "string" };
+    schemaProps["rows"] = {
+      type: "array",
+      items: { type: "object", properties: rowProps },
+    };
+  }
+
   const format = { type: "object", properties: schemaProps, additionalProperties: false };
 
   const isClassifier = isListClassifierTemplate(schema);
@@ -273,7 +290,17 @@ export function buildExtractionPrompt(
   const defaultSection = defaultSectionFor(templateBasename, bodySectionNames);
 
   let system: string;
-  if (expandMeals) {
+  if (isTableTemplate) {
+    system =
+      "You help the user build a tabular note from what they say or type. " +
+      `The target table's columns are: ${tableHeaders.join(", ")}. ` +
+      "For each item or batch the user mentions, return ONE row object under the \"rows\" array. " +
+      "Fill only the columns the user actually said; leave the others empty. " +
+      "Never invent items or column values. " +
+      "Non-table fields (like dates) go in their matching ASK FIELD. " +
+      "Never set `priority` or `Priority Level` — those keys are forbidden. " +
+      "Return JSON matching the provided schema.";
+  } else if (expandMeals) {
     system =
       "You help the user build a grocery list from what they say or type. " +
       `Each item goes into one of these sections: ${bodySectionNames.join(", ")}. ` +
@@ -303,7 +330,9 @@ export function buildExtractionPrompt(
       "Never set `priority` or `Priority Level` — those keys are forbidden.";
   }
 
-  const user = `TEMPLATE SECTIONS: ${bodySectionNames.join(", ") || "(none)"}\n` +
+  const user =
+    (isTableTemplate ? `TABLE COLUMNS: ${tableHeaders.join(", ")}\n` : "") +
+    `TEMPLATE SECTIONS: ${bodySectionNames.join(", ") || "(none)"}\n` +
     `INLINE FIELDS: ${inlineLabels.join(", ") || "(none)"}\n` +
     `ASK FIELDS: ${askFields.join(", ") || "(none)"}\n\n` +
     `USER DESCRIPTION:\n${transcript}`;
@@ -450,6 +479,12 @@ export function generateTitle(
     case "Trip Packing Checklist": {
       const d = asString(extracted.destination) || "Trip";
       return `${d} Packing List`;
+    }
+    case "Inventory": {
+      // Prefer a model-supplied title if present; otherwise date-stamped.
+      const t = asString(extracted.title);
+      if (t) return titleCase(t.slice(0, 80));
+      return `Inventory — ${today}`;
     }
     default: {
       const t = asString(extracted.title);
