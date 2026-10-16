@@ -172,10 +172,21 @@ test("hubMainWithAppendedLink is idempotent and adds heading when missing", () =
   assert.ok(added.includes("- [[Project X]]"));
 });
 
-test("assertNoPriorityWrite throws only on non-empty priority (Priority Level is passthrough)", () => {
-  assert.throws(() => assertNoPriorityWrite({ priority: "q1" }), /hard-rule/);
+test("assertNoPriorityWrite validates priority is empty or q1-q4 (template-owned; model is scrubbed upstream)", () => {
+  // Known-valid priority values pass; templates can seed q1 (e.g.
+  // Grocery List Template) because the model's output never reaches
+  // this field.
+  assert.doesNotThrow(() => assertNoPriorityWrite({ priority: "q1" }));
+  assert.doesNotThrow(() => assertNoPriorityWrite({ priority: "q2" }));
+  assert.doesNotThrow(() => assertNoPriorityWrite({ priority: "q3" }));
+  assert.doesNotThrow(() => assertNoPriorityWrite({ priority: "q4" }));
   assert.doesNotThrow(() => assertNoPriorityWrite({ priority: "" }));
   assert.doesNotThrow(() => assertNoPriorityWrite({}));
+  // Garbage values still throw — a bug must surface, not land silently
+  // in a note.
+  assert.throws(() => assertNoPriorityWrite({ priority: "high" }), /hard-rule/);
+  assert.throws(() => assertNoPriorityWrite({ priority: "Q1" }), /hard-rule/);
+  assert.throws(() => assertNoPriorityWrite({ priority: 1 }), /hard-rule/);
   // Priority Level is template-locked — the writer preserves whatever
   // value the template set. assertNoPriorityWrite does NOT touch it.
   assert.doesNotThrow(() => assertNoPriorityWrite({ "Priority Level": "2: Not Urgent, Important" }));

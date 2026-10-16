@@ -88,7 +88,13 @@ export function mealTypeFor(dish: MenuItem): MealType {
 export interface MealPlannerArtifact {
   body: string;
   suggestedBasename: string;
+  // Vault folder the planner note should land in, independent of
+  // the Grocery note's folder. Null → fall back to the main note's
+  // folder (preserves pre-routing behaviour).
+  folder: string | null;
 }
+
+export const DEFAULT_MEAL_PLANNER_FOLDER = "Health HUB/Meal Planning";
 
 export function renderMealPlanner(
   dishes: readonly MenuItem[],
@@ -113,7 +119,7 @@ export function renderMealPlanner(
   const body = sections.map((m) => renderSection(m, bucketed.get(m)!)).join("\n");
   const content = `${header}${summary}\n${body}`.replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
 
-  return { body: content, suggestedBasename: title };
+  return { body: content, suggestedBasename: title, folder: DEFAULT_MEAL_PLANNER_FOLDER };
 }
 
 function bucket(dishes: readonly MenuItem[]): Map<MealType, MenuItem[]> {

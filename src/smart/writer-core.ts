@@ -29,11 +29,15 @@ export interface RenderResult {
   schema: TemplateSchema;
 }
 
-// `priority` is the hard-rule key — ALWAYS empty, no matter what.
-// `Priority Level` and `Priority Matrix` are template-owned fields:
-// the writer preserves whatever the template set, but never allows
-// extracted (i.e. model-sourced) data to supply them.
-const HARD_EMPTY_KEYS = new Set(["priority"]);
+// `priority` is a template-owned field: the writer passes through
+// whatever the template set, but model-sourced data is scrubbed
+// upstream so the model can never influence it. Templates that author
+// `priority:` with no value stay empty; templates that author
+// `priority: q1` (e.g. Grocery List) emit q1 on save. Any other value
+// is a bug — the assertion catches it.
+// `Priority Level` and `Priority Matrix` are the same shape:
+// template-owned, never model-sourced.
+const VALID_PRIORITY_VALUES = new Set(["", "q1", "q2", "q3", "q4"]);
 const EXTRACTED_LOCKED_KEYS = new Set([
   "priority",
   "Priority Level",
@@ -42,11 +46,11 @@ const EXTRACTED_LOCKED_KEYS = new Set([
 const FILENAME_FORBIDDEN = /[\\/:*?"<>|]/g;
 
 export function assertNoPriorityWrite(fm: Record<string, unknown>): void {
-  for (const key of HARD_EMPTY_KEYS) {
-    const v = fm[key];
-    if (v === undefined || v === null || v === "") continue;
+  const v = fm.priority;
+  const s = v === undefined || v === null ? "" : String(v).trim();
+  if (!VALID_PRIORITY_VALUES.has(s)) {
     throw new Error(
-      `Smart Note hard-rule violation: refused to write ${key}=${JSON.stringify(v)}`,
+      `Smart Note hard-rule violation: refused to write priority=${JSON.stringify(v)}`,
     );
   }
 }
@@ -118,10 +122,11 @@ interface FieldContext {
 function resolveFieldValue(field: ClassifiedField, ctx: FieldContext): unknown {
   switch (field.class) {
     case "forbidden":
-      // `priority` always empty. Other extracted-locked keys like
-      // `Priority Level` / `Priority Matrix` keep whatever value the
-      // template carried — passthrough, never writer-generated.
-      if (field.key === "priority") return "";
+      // Template-sourced only. `priority`, `Priority Level`, and
+      // `Priority Matrix` keep whatever value the template carried
+      // (likely empty, but a template can seed a default — e.g.
+      // Grocery List Template authors `priority: q1`). Model-sourced
+      // values are scrubbed upstream (see scrubExtracted).
       return ctx.currentValue ?? "";
     case "auto-date":
       return ctx.today;

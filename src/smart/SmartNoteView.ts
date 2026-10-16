@@ -538,11 +538,14 @@ export class SmartNoteView extends ItemView {
         });
         notifyWritten(outcome);
         // Side artifacts: Grocery sessions also write a Meal Planner.
-        // Failures here must not undo the main save — surface a notice
-        // and move on.
+        // Each artifact may name its own target folder (Meal Planner
+        // → Health HUB/Meal Planning); null falls back to the main
+        // note's folder. Failures here must not undo the main save —
+        // surface a notice and move on.
         for (const extra of plan.extraArtifacts) {
+          const extraFolder = extra.folder ?? folder;
           try {
-            const file = await writeExtraArtifact(this.app, folder, extra.suggestedBasename, extra.body);
+            const file = await writeExtraArtifact(this.app, extraFolder, extra.suggestedBasename, extra.body);
             new Notice(`Also created ${file.path}`);
           } catch (e) {
             new Notice(`Side artifact "${extra.suggestedBasename}" failed: ${(e as Error).message}`);

@@ -59,9 +59,10 @@ test("mealTypeFor unknown section + unknown prefix → Other", () => {
   assert.equal(mealTypeFor(dish({ id: "ZZ1", section: "" })), "Other");
 });
 
-test("renderMealPlanner header, title, basename", () => {
+test("renderMealPlanner header, title, basename, folder", () => {
   const out = renderMealPlanner([dish({ id: "BM9", dish: "Ramekin Denver Egg Bake", section: "Breakfast" })], "2026-10-15");
   assert.equal(out.suggestedBasename, "Meal Planner — 2026-10-15");
+  assert.equal(out.folder, "Health HUB/Meal Planning");
   assert.match(out.body, /^---\ntags: \[meal-planner\]\ncreated: 2026-10-15\n---\n\n# Meal Planner — 2026-10-15\n/);
 });
 
