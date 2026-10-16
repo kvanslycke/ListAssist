@@ -21,10 +21,24 @@ import {
   submitCapture,
   answerFollowUp,
   prepareReview,
+  expandTaskSubtasks,
   type ChatFn,
   type SessionState,
   type TemplateRef,
 } from "./session";
+import {
+  setTask,
+  setPriority,
+  setDue,
+  setFolder,
+  setSubtasks,
+  nextRound,
+  finishLoop,
+  stepBack as todoStepBack,
+  renderDraft as renderTodoDraft,
+  type TodoDraft,
+  type TodoPriority,
+} from "./todoLoop";
 import { chat as ollamaChat, DEFAULT_CONFIG as OLLAMA_DEFAULTS, prewarmModel, healthCheck, type OllamaConfig } from "./ollamaClient";
 import { AudioCapture } from "./audioCapture";
 import { WhisperTranscriber, whisperHealth } from "./whisperTranscriber";
@@ -179,6 +193,9 @@ export class SmartNoteView extends ItemView {
   private renderPhase(): void {
     const { contentEl } = this;
     contentEl.empty();
+    if (this.session.kind === "todo-loop" && this.session.todoLoop && this.session.state === "awaitCapture") {
+      return this.renderTodoLoop(contentEl);
+    }
     switch (this.session.state) {
       case "pickTemplate":
         return this.renderPickTemplate(contentEl);
@@ -573,6 +590,226 @@ export class SmartNoteView extends ItemView {
 
   private renderStatus(el: HTMLElement, text: string): void {
     el.createEl("h2", { text });
+  }
+
+  // ---------- To-Do loop ----------
+  //
+  // Multi-note flow: one session walks through N rounds, each creating
+  // its own note. Session.state stays at "awaitCapture" while the
+  // inner todoLoop state machine drives the UI.
+
+  private renderTodoLoop(el: HTMLElement): void {
+    const loop = this.session.todoLoop!;
+    el.createEl("h2", { text: "Smart Note — To-Do" });
+    if (loop.drafts.length > 0) {
+      const dr = el.createDiv();
+      dr.style.opacity = "0.75";
+      dr.style.fontSize = "0.9em";
+      dr.style.marginBottom = "8px";
+      dr.createEl("div", { text: `Drafted so far: ${loop.drafts.length}` });
+      const ul = dr.createEl("ul");
+      ul.style.margin = "4px 0 0 0";
+      for (const d of loop.drafts) {
+        ul.createEl("li", { text: `${d.title}${d.priority ? ` [${d.priority}]` : ""}${d.due ? ` due ${d.due}` : ""}` });
+      }
+    }
+    if (loop.error) {
+      const err = el.createEl("p", { text: loop.error });
+      err.style.color = "var(--text-error)";
+    }
+    switch (loop.state) {
+      case "askTask": return this.renderTodoAskTask(el);
+      case "askPriority": return this.renderTodoAskPriority(el);
+      case "askDue": return this.renderTodoAskDue(el);
+      case "askFolder": return this.renderTodoAskFolder(el);
+      case "askSubtasks": return this.renderTodoAskSubtasks(el);
+      case "roundEnd": return this.renderTodoRoundEnd(el);
+      case "review": return this.renderTodoReview(el);
+      case "writing": return this.renderStatus(el, "Saving all drafts…");
+      case "done": return this.detach();
+      case "error": return this.renderError(el);
+    }
+  }
+
+  private renderTodoAskTask(el: HTMLElement): void {
+    el.createEl("p", { text: "What is the task?" });
+    let value = "";
+    const input = el.createEl("textarea");
+    input.rows = 2;
+    input.style.width = "100%";
+    input.placeholder = "e.g. renew truck registration";
+    input.addEventListener("input", () => (value = input.value));
+    input.focus();
+    const row = el.createDiv({ cls: "modal-button-container" });
+    row.createEl("button", { text: "Next", cls: "mod-cta" }).addEventListener("click", () => {
+      const loop = setTask(this.session.todoLoop!, value);
+      this.session = { ...this.session, todoLoop: loop };
+      this.renderPhase();
+    });
+    row.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.detach());
+  }
+
+  private renderTodoAskPriority(el: HTMLElement): void {
+    el.createEl("p", { text: "Priority?" });
+    const row = el.createDiv({ cls: "modal-button-container" });
+    const choose = (p: TodoPriority) => {
+      this.session = { ...this.session, todoLoop: setPriority(this.session.todoLoop!, p) };
+      this.renderPhase();
+    };
+    for (const p of ["q1", "q2", "q3", "q4"] as const) {
+      row.createEl("button", { text: p, cls: "mod-cta" }).addEventListener("click", () => choose(p));
+    }
+    row.createEl("button", { text: "Skip" }).addEventListener("click", () => choose(""));
+    el.createDiv({ cls: "modal-button-container" })
+      .createEl("button", { text: "Back" })
+      .addEventListener("click", () => {
+        this.session = { ...this.session, todoLoop: todoStepBack(this.session.todoLoop!) };
+        this.renderPhase();
+      });
+  }
+
+  private renderTodoAskDue(el: HTMLElement): void {
+    el.createEl("p", { text: 'When is this due? (YYYY-MM-DD, "next Friday", "the 25th", or Skip)' });
+    let value = "";
+    const input = el.createEl("input", { type: "text" });
+    input.style.width = "100%";
+    input.placeholder = "skip";
+    input.addEventListener("input", () => (value = input.value));
+    input.focus();
+    const today = this.session.deps.nowISODate();
+    const row = el.createDiv({ cls: "modal-button-container" });
+    row.createEl("button", { text: "Next", cls: "mod-cta" }).addEventListener("click", () => {
+      this.session = { ...this.session, todoLoop: setDue(this.session.todoLoop!, value, today) };
+      this.renderPhase();
+    });
+    row.createEl("button", { text: "Skip" }).addEventListener("click", () => {
+      this.session = { ...this.session, todoLoop: setDue(this.session.todoLoop!, "", today) };
+      this.renderPhase();
+    });
+    row.createEl("button", { text: "Back" }).addEventListener("click", () => {
+      this.session = { ...this.session, todoLoop: todoStepBack(this.session.todoLoop!) };
+      this.renderPhase();
+    });
+  }
+
+  private renderTodoAskFolder(el: HTMLElement): void {
+    el.createEl("p", { text: "Which folder should this note go in?" });
+    const folders = this.listPickableFolders();
+    let folder = "";
+    new Setting(el)
+      .setName("Folder")
+      .addDropdown((d) => {
+        d.addOption("", "(vault root)");
+        for (const f of folders) d.addOption(f, f);
+        d.setValue(folder);
+        d.onChange((v) => (folder = v));
+      });
+    const row = el.createDiv({ cls: "modal-button-container" });
+    row.createEl("button", { text: "Next", cls: "mod-cta" }).addEventListener("click", () => {
+      this.session = { ...this.session, todoLoop: setFolder(this.session.todoLoop!, folder) };
+      this.renderPhase();
+    });
+    row.createEl("button", { text: "Back" }).addEventListener("click", () => {
+      this.session = { ...this.session, todoLoop: todoStepBack(this.session.todoLoop!) };
+      this.renderPhase();
+    });
+  }
+
+  private renderTodoAskSubtasks(el: HTMLElement): void {
+    el.createEl("p", { text: "Any subtasks? (one per line, or Skip to let the model draft a basic list.)" });
+    const area = el.createEl("textarea");
+    area.rows = 6;
+    area.style.width = "100%";
+    area.placeholder = "find vet number\nask about shots";
+    area.focus();
+    const row = el.createDiv({ cls: "modal-button-container" });
+    const submit = async (useLlm: boolean) => {
+      const lines = area.value.split(/\r?\n/).map((s) => s.trim()).filter((s) => s.length > 0);
+      let loop = setSubtasks(this.session.todoLoop!, lines);
+      if (useLlm && lines.length === 0) {
+        const title = loop.current.title ?? "";
+        const llm = await expandTaskSubtasks(this.session.deps.chat, title);
+        loop = { ...loop, current: { ...loop.current, llmSubtasks: llm } };
+      }
+      this.session = { ...this.session, todoLoop: loop };
+      this.renderPhase();
+    };
+    row.createEl("button", { text: "Next", cls: "mod-cta" }).addEventListener("click", () => void submit(false));
+    row.createEl("button", { text: "Skip (let model draft)" }).addEventListener("click", () => void submit(true));
+    row.createEl("button", { text: "Back" }).addEventListener("click", () => {
+      this.session = { ...this.session, todoLoop: todoStepBack(this.session.todoLoop!) };
+      this.renderPhase();
+    });
+  }
+
+  private renderTodoRoundEnd(el: HTMLElement): void {
+    const loop = this.session.todoLoop!;
+    const cur = loop.current;
+    el.createEl("p", { text: `Round done: ${cur.title}${cur.priority ? ` [${cur.priority}]` : ""}${cur.due ? ` due ${cur.due}` : ""}` });
+    const row = el.createDiv({ cls: "modal-button-container" });
+    row.createEl("button", { text: "Add another task", cls: "mod-cta" }).addEventListener("click", () => {
+      this.session = { ...this.session, todoLoop: nextRound(this.session.todoLoop!) };
+      this.renderPhase();
+    });
+    row.createEl("button", { text: "Done — Save All" }).addEventListener("click", () => {
+      this.session = { ...this.session, todoLoop: finishLoop(this.session.todoLoop!) };
+      this.renderPhase();
+    });
+    row.createEl("button", { text: "Back" }).addEventListener("click", () => {
+      this.session = { ...this.session, todoLoop: todoStepBack(this.session.todoLoop!) };
+      this.renderPhase();
+    });
+  }
+
+  private renderTodoReview(el: HTMLElement): void {
+    const loop = this.session.todoLoop!;
+    el.createEl("h3", { text: `Save ${loop.drafts.length} to-do note${loop.drafts.length === 1 ? "" : "s"}?` });
+    const ul = el.createEl("ul");
+    for (const d of loop.drafts) {
+      const li = ul.createEl("li");
+      li.createEl("div", { text: `${d.title}${d.priority ? ` [${d.priority}]` : ""}${d.due ? ` due ${d.due}` : ""} → ${d.folder || "(vault root)"}` });
+      if (d.subtasks.length > 0) {
+        li.createEl("div", { text: `subtasks: ${d.subtasks.join("; ")}` }).style.opacity = "0.75";
+      } else if (d.llmSubtasks && d.llmSubtasks.length > 0) {
+        li.createEl("div", { text: `model subtasks: ${d.llmSubtasks.join("; ")}` }).style.opacity = "0.75";
+      } else {
+        li.createEl("div", { text: `body falls back to: - [ ] ${d.title}` }).style.opacity = "0.75";
+      }
+    }
+    const row = el.createDiv({ cls: "modal-button-container" });
+    row.createEl("button", { text: "Save All", cls: "mod-cta" }).addEventListener("click", () => void this.saveTodoBatch());
+    row.createEl("button", { text: "Back" }).addEventListener("click", () => {
+      this.session = { ...this.session, todoLoop: todoStepBack(this.session.todoLoop!) };
+      this.renderPhase();
+    });
+    row.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.detach());
+  }
+
+  private async saveTodoBatch(): Promise<void> {
+    const loop = this.session.todoLoop!;
+    const template = this.session.template!;
+    const today = this.session.deps.nowISODate();
+    this.session = { ...this.session, todoLoop: { ...loop, state: "writing" } };
+    this.renderPhase();
+    let saved = 0;
+    for (const draft of loop.drafts) {
+      try {
+        const rendered = renderTodoDraft({ draft, templateRaw: template.raw, today });
+        const outcome = await writeSmartNote(rendered, {
+          app: this.app,
+          folder: draft.folder,
+          linkToHub: true,
+          hubLinkHeading: this.hubLinkHeadingFor(rendered.schema.isActionable, template.basename),
+        });
+        notifyWritten(outcome);
+        saved++;
+      } catch (e) {
+        new Notice(`"${draft.title}" failed: ${(e as Error).message}`);
+      }
+    }
+    new Notice(`Saved ${saved}/${loop.drafts.length} to-do note${loop.drafts.length === 1 ? "" : "s"}`);
+    this.outcome = saved > 0 ? "saved" : "error";
+    this.detach();
   }
 
   private renderError(el: HTMLElement): void {

@@ -22,6 +22,13 @@ import {
   type GroceryUnitIndex,
 } from "./groceryUnits";
 import { renderMealPlanner, type MealPlannerArtifact } from "./mealPlanner";
+import {
+  createTodoLoop,
+  parseLlmSubtasks,
+  SUBTASK_FORMAT,
+  SUBTASK_SYSTEM_PROMPT,
+  type TodoLoopSession,
+} from "./todoLoop";
 
 export type State =
   | "pickTemplate"
@@ -60,6 +67,8 @@ export interface FollowUpQuestion {
   prompt: string;
 }
 
+export type SessionKind = "default" | "todo-loop";
+
 export interface SessionState {
   state: State;
   deps: SessionDeps;
@@ -72,6 +81,11 @@ export interface SessionState {
   error: string | null;
   warnings: string[];
   menuExpansion: ExpansionResult | null;
+  // The To-Do List template drives a multi-note loop instead of the
+  // one-note extract/review flow. Non-null only when kind is
+  // "todo-loop".
+  kind: SessionKind;
+  todoLoop: TodoLoopSession | null;
 }
 
 export function createSession(deps: SessionDeps): SessionState {
@@ -87,7 +101,37 @@ export function createSession(deps: SessionDeps): SessionState {
     error: null,
     warnings: [],
     menuExpansion: null,
+    kind: "default",
+    todoLoop: null,
   };
+}
+
+export function isTodoListTemplate(templateBasename: string): boolean {
+  return /^to-?do list(?:\s+template)?$/i.test(templateBasename.trim());
+}
+
+// Ask the local model to break a task title into 1–5 simple
+// sub-actions. Called from the To-Do loop when the user skipped the
+// subtasks step. Every failure mode (chat throws, model returns [],
+// parse rejects garbage) collapses to [] so the renderer falls back
+// to a single `- [ ] <title>` body. The caller stores the result on
+// draft.llmSubtasks before rendering.
+export async function expandTaskSubtasks(
+  chat: ChatFn,
+  title: string,
+): Promise<string[]> {
+  try {
+    const res = await chat({
+      messages: [
+        { role: "system", content: SUBTASK_SYSTEM_PROMPT },
+        { role: "user", content: `TASK TITLE: ${title}` },
+      ],
+      format: SUBTASK_FORMAT,
+    });
+    return parseLlmSubtasks(res.parsed);
+  } catch {
+    return [];
+  }
 }
 
 // -- Fuzzy template pick -----------------------------------------
@@ -103,12 +147,15 @@ export function pickTemplate(
 ): { session: SessionState; pick: TemplatePickResult } {
   const pick = fuzzyMatchTemplates(utterance, session.deps.templates);
   if (!pick.primary) return { session, pick };
+  const kind: SessionKind = isTodoListTemplate(pick.primary.basename) ? "todo-loop" : "default";
   return {
     session: {
       ...session,
       state: "awaitCapture",
       template: pick.primary,
       schema: classifyTemplate(pick.primary.raw),
+      kind,
+      todoLoop: kind === "todo-loop" ? createTodoLoop() : null,
     },
     pick,
   };
