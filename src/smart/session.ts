@@ -21,6 +21,7 @@ import {
   convertIngredient,
   type GroceryUnitIndex,
 } from "./groceryUnits";
+import { renderMealPlanner, type MealPlannerArtifact } from "./mealPlanner";
 
 export type State =
   | "pickTemplate"
@@ -465,6 +466,9 @@ export interface ReviewPlan {
   rendered: RenderResult;
   folder: RoutingResult;
   title: string;
+  // Additional notes to write beside the main one. Grocery sessions
+  // emit a Meal Planner artifact here; most templates emit none.
+  extraArtifacts: MealPlannerArtifact[];
 }
 
 export function prepareReview(
@@ -483,12 +487,16 @@ export function prepareReview(
   // the body listing the Menu Items IDs the user expanded. This runs
   // after the LLM has filled in Produce/Meat/Pantry/… so the dish
   // reference is always right, regardless of what the model wrote.
+  const extraArtifacts: MealPlannerArtifact[] = [];
   if (
     /grocery/i.test(session.template.basename) &&
     session.menuExpansion &&
     session.menuExpansion.found.length > 0
   ) {
     rendered.body = injectDishesSection(rendered.body, session.menuExpansion.found);
+    // And emit the sibling Meal Planner note. Same date, same folder;
+    // the writer handles filename collisions independently.
+    extraArtifacts.push(renderMealPlanner(session.menuExpansion.found, session.deps.nowISODate()));
   }
   const folder = suggestFolder({
     templateBasename: session.template.basename,
@@ -496,7 +504,7 @@ export function prepareReview(
     lastUsed: opts.lastUsed ?? session.deps.lastUsedByTemplate?.get(session.template.basename) ?? null,
     modelPick: opts.modelPick ?? null,
   });
-  return { rendered, folder, title };
+  return { rendered, folder, title, extraArtifacts };
 }
 
 // -- Title generation -------------------------------------------

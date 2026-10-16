@@ -16,7 +16,8 @@ export interface Ingredient {
 export interface MenuItem {
   id: string;          // "B11", "L47", "DS7"
   dish: string;
-  category: string;    // "Breakfast" | "Lunch" | "Dinner" | "Dessert" | "Snack" | "Side"
+  category: string;    // ID-prefix category: "Breakfast" | "Lunch" | "Dinner" | "Dessert" | "Snack" | "Side" | "Baking" | "Middle Kitchen" | ...
+  section: string;     // Containing Menu Items.md H2 heading: "Breakfast" | "Lunch" | "Dinner" | "Ranch Dishes" | ...; "" if the row preceded any heading.
   ingredients: Ingredient[]; // empty array when the Ingredients cell is blank
 }
 
@@ -48,10 +49,21 @@ const ROW_RE = /^\s*\|\s*([A-Z]{1,2}\d+)\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*(?:\|
 // Longest-first alternation so DS/SD/BK/MK/BM/NV/FD/PS/TK/PZ match before single letters.
 const ID_PREFIX_RE = /^(DS|SD|BK|MK|BM|NV|FD|PS|TK|PZ|B|L|D|S)(\d+)$/;
 
+// Captures "## Breakfast" / "## Ranch Dishes" / etc. so each parsed
+// row carries the containing section as well as the prefix-derived
+// category.
+const H2_RE = /^##\s+(.+?)\s*$/;
+
 export function parseMenuItems(content: string): MenuIndex {
   const byId = new Map<string, MenuItem>();
   const lines = content.split(/\r?\n/);
+  let currentSection = "";
   for (const line of lines) {
+    const h = H2_RE.exec(line);
+    if (h) {
+      currentSection = h[1].trim();
+      continue;
+    }
     const m = ROW_RE.exec(line);
     if (!m) continue;
     const id = m[1].toUpperCase();
@@ -67,6 +79,7 @@ export function parseMenuItems(content: string): MenuIndex {
       id,
       dish,
       category,
+      section: currentSection,
       ingredients: ingredientsCell ? parseIngredientList(ingredientsCell) : [],
     });
   }

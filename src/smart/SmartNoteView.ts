@@ -31,7 +31,7 @@ import { WhisperTranscriber, whisperHealth } from "./whisperTranscriber";
 import { GemmaTranscriber } from "./gemmaTranscriber";
 import type { Transcriber } from "./transcriber";
 import { assembleNote } from "./writer-core";
-import { writeSmartNote, notifyWritten, type WriteContext, type AppendModeContext } from "./writer";
+import { writeSmartNote, writeExtraArtifact, notifyWritten, type WriteContext, type AppendModeContext } from "./writer";
 import { parseTags } from "./tagIndex";
 import { renderAppendEntry } from "./writer-core";
 import { todayISO } from "../util";
@@ -537,6 +537,17 @@ export class SmartNoteView extends ItemView {
           append: this.buildAppendCtx(plan.rendered, folder),
         });
         notifyWritten(outcome);
+        // Side artifacts: Grocery sessions also write a Meal Planner.
+        // Failures here must not undo the main save — surface a notice
+        // and move on.
+        for (const extra of plan.extraArtifacts) {
+          try {
+            const file = await writeExtraArtifact(this.app, folder, extra.suggestedBasename, extra.body);
+            new Notice(`Also created ${file.path}`);
+          } catch (e) {
+            new Notice(`Side artifact "${extra.suggestedBasename}" failed: ${(e as Error).message}`);
+          }
+        }
         await this.rememberLastUsed(folder);
         const leaf = this.app.workspace.getLeaf(false);
         if (outcome.file instanceof TFile) await leaf.openFile(outcome.file);

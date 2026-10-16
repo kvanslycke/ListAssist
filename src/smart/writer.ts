@@ -152,6 +152,25 @@ function findMainNotePath(app: App, folder: string, mainBasename: string): strin
   return null;
 }
 
+// Write an auxiliary note (e.g. the Meal Planner emitted alongside a
+// Grocery note). Same folder as the main note, no frontmatter
+// assembly, no hub-link side-effect — the body is already fully
+// rendered markdown.
+export async function writeExtraArtifact(
+  app: App,
+  folder: string,
+  basename: string,
+  body: string,
+): Promise<TFile> {
+  const trimmed = folder.trim();
+  if (trimmed) await ensureFolder(app, trimmed);
+  const taken = listFilenamesInFolder(app, trimmed);
+  const safeBase = `${basename}.md`;
+  const finalName = resolveCollision(safeBase, taken);
+  const path = trimmed ? normalizePath(`${trimmed}/${finalName}`) : finalName;
+  return (await app.vault.create(path, body)) as TFile;
+}
+
 export function notifyWritten(outcome: WriteOutcome): void {
   const kind = outcome.wasAppend ? "Appended to" : "Created";
   const hub = outcome.hubMainUpdated ? `\nLinked in ${outcome.hubMainUpdated}` : "";
