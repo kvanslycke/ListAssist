@@ -76,7 +76,7 @@ test("chat returns parsed JSON on first try", async () => {
   const body = JSON.parse(calls[0].body);
   assert.equal(body.model, "gemma4:e4b");
   assert.equal(body.stream, false);
-  assert.equal(body.keep_alive, "15m");
+  assert.equal(body.keep_alive, "30m");
   assert.equal(body.options.temperature, 0.2);
   assert.equal(body.options.num_ctx, 8192);
   assert.equal(body.options.think, false);

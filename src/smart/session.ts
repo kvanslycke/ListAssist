@@ -14,8 +14,13 @@ import {
   formatIngredient,
   stripMenuIdsFromUtterance,
   type ExpansionResult,
+  type Ingredient,
   type MenuIndex,
 } from "./menuItems";
+import {
+  convertIngredient,
+  type GroceryUnitIndex,
+} from "./groceryUnits";
 
 export type State =
   | "pickTemplate"
@@ -165,6 +170,7 @@ export interface CaptureOptions {
   expandMeals?: boolean;              // Grocery-only: expand named meals into ingredients via the LLM
   expandMenuNumbers?: boolean;        // Grocery-only: expand menu IDs via Reference HUB/Menu Items.md
   menuIndex?: MenuIndex | null;       // required when expandMenuNumbers is true
+  groceryUnits?: GroceryUnitIndex | null; // optional; Grocery-only: translate recipe units into store purchase units + drop staples
 }
 
 export async function submitCapture(
@@ -190,9 +196,8 @@ export async function submitCapture(
       for (const id of menuExpansion.unfilledIds) {
         warnings.push(`Menu ID ${id} has no ingredients filled in yet`);
       }
-      const expandedLines = menuExpansion.ingredients
-        .map((i) => `- ${formatIngredient(i)}`)
-        .join("\n");
+      const promptLines = formatForGroceryPrompt(menuExpansion.ingredients, opts.groceryUnits ?? null);
+      const expandedLines = promptLines.join("\n");
       const remainder = stripMenuIdsFromUtterance(transcript);
       const header =
         expandedLines.length > 0
@@ -225,6 +230,34 @@ export async function submitCapture(
   } catch (e) {
     return { ...base, state: "error", error: (e as Error).message, warnings, menuExpansion };
   }
+}
+
+// Format the summed ingredients as the prompt lines the LLM sees for
+// Grocery mode. Rules:
+//   - Staples (olive oil, salt, cooking spray, …) are dropped entirely.
+//   - Ingredients present in Grocery Units.md emit the store-unit line
+//     ("1 dozen eggs", "1 bunch broccoli").
+//   - Ingredients NOT in the table fall back to the recipe-raw format
+//     ("3 lb chicken breast", "0.25 cup diced bell pepper").
+//   - Free-form quantities ("to taste") always fall through.
+// Exported for tests; also used from submitCapture above.
+export function formatForGroceryPrompt(
+  ingredients: readonly Ingredient[],
+  groceryUnits: GroceryUnitIndex | null,
+): string[] {
+  const out: string[] = [];
+  for (const ing of ingredients) {
+    if (groceryUnits) {
+      const conv = convertIngredient(ing, groceryUnits);
+      if (conv.staple) continue;
+      if (conv.matched && conv.line) {
+        out.push(`- ${conv.line}`);
+        continue;
+      }
+    }
+    out.push(`- ${formatIngredient(ing)}`);
+  }
+  return out;
 }
 
 // A template is a "list classifier" when it has multiple body sections
@@ -446,6 +479,17 @@ export function prepareReview(
     today: session.deps.nowISODate(),
     extracted: session.extracted,
   });
+  // Grocery: inject a deterministic "## Dishes" section at the top of
+  // the body listing the Menu Items IDs the user expanded. This runs
+  // after the LLM has filled in Produce/Meat/Pantry/… so the dish
+  // reference is always right, regardless of what the model wrote.
+  if (
+    /grocery/i.test(session.template.basename) &&
+    session.menuExpansion &&
+    session.menuExpansion.found.length > 0
+  ) {
+    rendered.body = injectDishesSection(rendered.body, session.menuExpansion.found);
+  }
   const folder = suggestFolder({
     templateBasename: session.template.basename,
     folderEnum: opts.folderEnum ?? session.deps.folderEnum ?? [],
@@ -496,6 +540,25 @@ export function generateTitle(
 
 function asString(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
+}
+
+// Insert "## Dishes\n- ID — Dish\n…" right after the first H1 (so it
+// lives above the Produce/Meat/Pantry sections but below the title).
+// If no H1, prepend to the body. Idempotent on repeat renders —
+// replaces any existing "## Dishes" section.
+export function injectDishesSection(body: string, dishes: readonly { id: string; dish: string }[]): string {
+  if (dishes.length === 0) return body;
+  const lines = dishes.map((d) => `- ${d.id} — ${d.dish}`).join("\n");
+  const section = `## Dishes\n${lines}\n`;
+  // Strip any existing Dishes section first (idempotency).
+  const stripped = body.replace(/(^|\n)## Dishes\n(?:- .+\n?)+/, "$1").replace(/\n{3,}/g, "\n\n");
+  const h1 = /(^|\n)# [^\n]+\n/;
+  const match = h1.exec(stripped);
+  if (match) {
+    const insertAt = match.index + match[0].length;
+    return stripped.slice(0, insertAt) + "\n" + section + stripped.slice(insertAt);
+  }
+  return section + "\n" + stripped;
 }
 
 function titleCase(s: string): string {

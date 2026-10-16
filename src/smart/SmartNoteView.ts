@@ -37,8 +37,10 @@ import { renderAppendEntry } from "./writer-core";
 import { todayISO } from "../util";
 import { appendLog, type SmartNoteLogEntry } from "./logger";
 import { parseMenuItems, type MenuIndex } from "./menuItems";
+import { parseGroceryUnits, type GroceryUnitIndex } from "./groceryUnits";
 
 const MENU_ITEMS_PATH = "Reference HUB/Menu Items.md";
+const GROCERY_UNITS_PATH = "Reference HUB/Grocery Units.md";
 
 const EXCLUDED_FOLDERS = new Set([
   ".obsidian",
@@ -263,6 +265,7 @@ export class SmartNoteView extends ItemView {
   private expandMeals = false;
   private expandMenuNumbers = false;
   private menuIndex: MenuIndex | null = null;
+  private groceryUnits: GroceryUnitIndex | null = null;
 
   private async ensureMenuIndex(): Promise<MenuIndex | null> {
     if (this.menuIndex) return this.menuIndex;
@@ -272,6 +275,19 @@ export class SmartNoteView extends ItemView {
       const content = await this.app.vault.read(file);
       this.menuIndex = parseMenuItems(content);
       return this.menuIndex;
+    } catch {
+      return null;
+    }
+  }
+
+  private async ensureGroceryUnits(): Promise<GroceryUnitIndex | null> {
+    if (this.groceryUnits) return this.groceryUnits;
+    const file = this.app.vault.getAbstractFileByPath(GROCERY_UNITS_PATH);
+    if (!(file instanceof TFile)) return null;
+    try {
+      const content = await this.app.vault.read(file);
+      this.groceryUnits = parseGroceryUnits(content);
+      return this.groceryUnits;
     } catch {
       return null;
     }
@@ -357,6 +373,8 @@ export class SmartNoteView extends ItemView {
       this.session = { ...this.session, state: "extract" };
       this.renderPhase();
       let menuIndex: MenuIndex | null = null;
+      let groceryUnits: GroceryUnitIndex | null = null;
+      const isGrocery = /grocery/i.test(this.session.template?.basename ?? "");
       if (this.expandMenuNumbers) {
         menuIndex = await this.ensureMenuIndex();
         if (!menuIndex) {
@@ -365,10 +383,21 @@ export class SmartNoteView extends ItemView {
           );
         }
       }
+      if (isGrocery) {
+        groceryUnits = await this.ensureGroceryUnits();
+        // Missing file is non-fatal — Smart Note falls back to raw
+        // recipe units. We surface the hint only once per session.
+        if (!groceryUnits) {
+          new Notice(
+            `Grocery Units table not found at ${GROCERY_UNITS_PATH} — using recipe-raw units.`,
+          );
+        }
+      }
       this.session = await submitCapture(this.session, text, {
         expandMeals: this.expandMeals,
         expandMenuNumbers: this.expandMenuNumbers,
         menuIndex,
+        groceryUnits,
       });
       this.renderPhase();
     });
@@ -557,10 +586,12 @@ export class SmartNoteView extends ItemView {
         this.outcomeError = undefined;
         this.session = { ...this.session, state: "extract", error: null };
         this.renderPhase();
+        const retryIsGrocery = /grocery/i.test(this.session.template?.basename ?? "");
         this.session = await submitCapture(this.session, this.session.transcript || "", {
           expandMeals: this.expandMeals,
           expandMenuNumbers: this.expandMenuNumbers,
           menuIndex: this.expandMenuNumbers ? await this.ensureMenuIndex() : null,
+          groceryUnits: retryIsGrocery ? await this.ensureGroceryUnits() : null,
         });
         this.renderPhase();
       },
