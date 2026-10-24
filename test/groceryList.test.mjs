@@ -324,3 +324,10 @@ test("expandIds still sums for the Meal Planner path", () => {
   assert.equal(exp.found.length, 2);
   assert.ok(exp.ingredients.length >= 5);
 });
+
+test("ZE (Zero Effort) prefix resolves like the others", async () => {
+  const { extractMenuIds, parseMenuItems: pmi } = await import("../.test-build/smart/menuItems.js");
+  assert.deepEqual(extractMenuIds("ZE4 and D22").sort(), ["D22", "ZE4"]);
+  const idx = pmi("## Breakfast\n| ID | Dish | Ingredients |\n|---|---|---|\n| ZE4 | Frozen Waffles | frozen waffles: 4 whole; maple syrup: 0.25 cup |\n");
+  assert.equal(idx.byId.get("ZE4").category, "Zero Effort");
+});

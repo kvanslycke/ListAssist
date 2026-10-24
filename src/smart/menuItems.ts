@@ -42,12 +42,13 @@ const PREFIX_TO_CATEGORY: Record<string, string> = {
   PS: "Pinterest Sides",
   TK: "Top Kitchen",
   PZ: "Pizza",
+  ZE: "Zero Effort",   // 2026-10-24: 8 ZE rows existed in the vault but were unreachable (prefix unknown)
 };
 
 // Row accepts a 3rd Ingredients column and an optional 4th Source column.
 const ROW_RE = /^\s*\|\s*([A-Z]{1,2}\d+)\s*\|\s*([^|]*?)\s*\|\s*([^|]*?)\s*(?:\|\s*([^|]*?)\s*)?\|\s*$/;
 // Longest-first alternation so DS/SD/BK/MK/BM/NV/FD/PS/TK/PZ match before single letters.
-const ID_PREFIX_RE = /^(DS|SD|BK|MK|BM|NV|FD|PS|TK|PZ|B|L|D|S)(\d+)$/;
+const ID_PREFIX_RE = /^(DS|SD|BK|MK|BM|NV|FD|PS|TK|PZ|ZE|B|L|D|S)(\d+)$/;
 
 // Captures "## Breakfast" / "## Ranch Dishes" / etc. so each parsed
 // row carries the containing section as well as the prefix-derived
@@ -131,7 +132,7 @@ function parseIngredientList(cell: string): Ingredient[] {
 export function extractMenuIds(utterance: string): string[] {
   const found = new Set<string>();
   // Longest-prefix-first via regex alternation; filter against known set.
-  const direct = /\b(DS|SD|BK|MK|BM|NV|FD|PS|TK|PZ|B|L|D|S)(\d{1,3})\b/gi;
+  const direct = /\b(DS|SD|BK|MK|BM|NV|FD|PS|TK|PZ|ZE|B|L|D|S)(\d{1,3})\b/gi;
   let m: RegExpExecArray | null;
   while ((m = direct.exec(utterance)) !== null) {
     const prefix = m[1].toUpperCase();
@@ -177,7 +178,7 @@ export function stripMenuIdsFromUtterance(utterance: string): string {
   let s = utterance;
   s = s.replace(/\b(menu|number|no\.?|#)\s+/gi, " ");
   s = s.replace(/\b(breakfast|lunch|dinner|dessert|snack|sides?|baking|fondue|pizza)\s+\d{1,3}\b/gi, " ");
-  s = s.replace(/\b(?:DS|SD|BK|MK|BM|NV|FD|PS|TK|PZ|B|L|D|S)\d{1,3}\b/gi, " ");
+  s = s.replace(/\b(?:DS|SD|BK|MK|BM|NV|FD|PS|TK|PZ|ZE|B|L|D|S)\d{1,3}\b/gi, " ");
   s = s.replace(/\s+/g, " ").trim();
   // Trim any trailing dangling commas / "and" / "with" produced by the strip.
   s = s.replace(/^\s*(,|and|with|plus)\s+/i, "");
