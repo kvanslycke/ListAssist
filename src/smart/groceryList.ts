@@ -308,21 +308,49 @@ export function mergeItemsIntoExtracted(
     arr.push(formatGroceryItem(item, withOrigins));
     bySection.set(heading, arr);
   }
+  // Every menu line's bare name, so an extra the user names ("milk")
+  // that is already covered by a menu line ("1 half-gallon milk") is
+  // dropped wherever the model filed it.
+  const covered = items.map((i) => bareName(i.line));
+  const isCovered = (s: string): boolean => {
+    const b = bareName(s);
+    if (b.length < 3) return false;
+    // "milk" is covered by "whole milk"; "butter" by "butter".
+    return covered.some((c) => c === b || new RegExp(`(^|\\s)${escapeRe(b)}(\\s|$)`).test(c));
+  };
   for (const heading of sectionHeadings) {
     const mine = bySection.get(heading) ?? [];
     const prev = out[heading];
     const theirs = Array.isArray(prev) ? prev.filter((x): x is string => typeof x === "string" && x.trim().length > 0) : [];
     const seen = new Set<string>();
     const merged: string[] = [];
-    for (const s of [...mine, ...theirs]) {
+    for (const s of mine) {
       const k = s.trim().toLowerCase();
       if (seen.has(k)) continue;
       seen.add(k);
       merged.push(s.trim());
     }
+    for (const s of theirs) {
+      const k = s.trim().toLowerCase();
+      if (seen.has(k) || isCovered(s)) continue;
+      seen.add(k);
+      merged.push(s.trim());
+    }
     if (merged.length > 0) out[heading] = merged;
+    else delete out[heading];
   }
   return out;
+}
+
+// "1 half-gallon milk (from B26)" → "milk"; "2 sticks butter" → "butter";
+// "milk" → "milk". Strips a leading quantity + unit word, the origin
+// suffix, and a plural "s".
+export function bareName(line: string): string {
+  let s = line.replace(/\s*\(from [^)]*\)\s*$/i, "").trim().toLowerCase();
+  s = s.replace(/^\d+(?:\.\d+)?\s*(?:\+\s*\d+(?:\.\d+)?\s*)*/, "");
+  s = s.replace(/^(?:cups?|tbsps?|tsps?|oz|lbs?|cans?|jars?|packets?|packs?|boxe?s?|bags?|bottles?|slices?|cloves?|heads?|stalks?|bunch(?:es)?|pints?|quarts?|dozen|sticks?|tubs?|blocks?|cartons?|loa(?:f|ves)|half-gallons?|gallons?|pieces?|sheets?|wheels?|whole)\s+/, "");
+  s = s.replace(/\s+/g, " ").trim();
+  return normalizeName(s);
 }
 
 // Grocery notes: remove the template's empty "- [ ] " placeholder lines

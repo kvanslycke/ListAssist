@@ -12,6 +12,7 @@ import {
   departmentFor,
   formatGroceryItem,
   mergeItemsIntoExtracted,
+  bareName,
   sameDepartment,
   stripEmptyCheckboxes,
 } from "../.test-build/smart/groceryList.js";
@@ -150,6 +151,22 @@ test("mergeItemsIntoExtracted puts menu items first and dedupes the model's extr
   assert.deepEqual(out["🥑 Produce"], ["1 yellow onion (from D22)", "bananas"]);
   assert.deepEqual(out["🧀 Dairy & Refrigerated"], ["1 dozen eggs (from B26)"]);
   assert.equal(out["🐾 Pets & Ranch"], undefined);
+});
+
+test("extras already covered by a menu line are dropped (the duplicate 'milk' of 2026-10-24)", () => {
+  const idx = parseGroceryUnits(UNITS);
+  const items = buildGroceryItems([ing("whole milk", 2, "cup", "BM5"), ing("eggs", 2, "whole", "BM9")], idx, SECTIONS);
+  const out = mergeItemsIntoExtracted(
+    { "🧀 Dairy & Refrigerated": ["milk", "Milk", "yogurt"], "🍞 Bakery & Pantry": ["coffee"] },
+    items,
+    SECTIONS,
+    true,
+  );
+  assert.deepEqual(out["🧀 Dairy & Refrigerated"], ["1 half-gallon whole milk (from BM5)", "1 dozen eggs (from BM9)", "yogurt"]);
+  assert.deepEqual(out["🍞 Bakery & Pantry"], ["coffee"]);
+  assert.equal(bareName("1 half-gallon whole milk (from BM5)"), "whole milk");
+  assert.equal(bareName("2 sticks butter"), "butter");
+  assert.equal(bareName("eggs"), "egg");
 });
 
 test("stripEmptyCheckboxes removes blank placeholder boxes only", () => {
