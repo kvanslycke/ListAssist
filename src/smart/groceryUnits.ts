@@ -34,6 +34,7 @@ export interface GroceryUnitRow {
   aliases: string[];            // alternate names (lowercased, singular)
   isStaple: boolean;            // drop from output when true
   notes: string;
+  department: string;           // optional "Department" column: store aisle for the deterministic list ("" when absent)
 }
 
 export interface GroceryUnitIndex {
@@ -48,6 +49,10 @@ export interface ConversionResult {
   staple: boolean;
   /** True when the converter looked the ingredient up and emitted a store-unit line. */
   matched: boolean;
+  /** The matched table row (null when unmatched). */
+  row?: GroceryUnitRow | null;
+  /** Store-unit count emitted (0 when unmatched / staple). */
+  count?: number;
 }
 
 const ROW_RE = /^\s*\|(.+)\|\s*$/;
@@ -99,6 +104,7 @@ function buildRowFromCells(
   const recipeUnit = normalizeUnit(col("recipe unit"));
   const aliasesRaw = col("aliases");
   const notes = col("notes");
+  const department = col("department");
   const isStaple = /^staple$/i.test(storeUnitRaw);
   const storeUnit = isStaple ? "" : storeUnitRaw.toLowerCase();
   const parsedSize = parseFloat(sizeRaw);
@@ -116,6 +122,7 @@ function buildRowFromCells(
     aliases,
     isStaple,
     notes,
+    department,
   };
 }
 
@@ -218,14 +225,20 @@ export function convertIngredient(
   index: GroceryUnitIndex,
 ): ConversionResult {
   const row = lookupRow(index, ing.name, ing.quantityUnit);
-  if (!row) return { line: "", staple: false, matched: false };
-  if (row.isStaple) return { line: "", staple: true, matched: true };
+  if (!row) return { line: "", staple: false, matched: false, row: null, count: 0 };
+  if (row.isStaple) return { line: "", staple: true, matched: true, row, count: 0 };
   if (ing.quantityNumber === null) {
     // Free-form quantity ("to taste") — leave as-is at the caller level.
-    return { line: "", staple: false, matched: false };
+    return { line: "", staple: false, matched: false, row, count: 0 };
   }
   const recipeQty = ing.quantityNumber;
   const storeCount = Math.max(1, Math.ceil(recipeQty / row.storeUnitSize));
+  return { line: formatStoreLine(row, storeCount), staple: false, matched: true, row, count: storeCount };
+}
+
+// "1 dozen eggs", "2 bunches broccoli", "3 sweet potatoes". Shared by
+// the single-ingredient converter and the merged grocery list builder.
+export function formatStoreLine(row: GroceryUnitRow, storeCount: number): string {
   // "whole" is the no-unit sentinel — "2 bananas", not "2 wholes bananas".
   const emitUnit = row.storeUnit && row.storeUnit !== "whole";
   const unitWord = emitUnit ? pluralizeStoreUnit(row.storeUnit, storeCount) : "";
@@ -236,7 +249,7 @@ export function convertIngredient(
   const nameOut = !emitUnit ? pluralizeIngredient(row.ingredient, storeCount) : row.ingredient;
   const qtyStr = formatQty(storeCount);
   const parts = [qtyStr, unitWord, nameOut].filter((p) => p.length > 0);
-  return { line: parts.join(" "), staple: false, matched: true };
+  return parts.join(" ");
 }
 
 function pluralizeIngredient(name: string, count: number): string {

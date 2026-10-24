@@ -20,6 +20,7 @@ import {
   pickTemplate,
   submitCapture,
   answerFollowUp,
+  answerGroceryExtras,
   prepareReview,
   expandTaskSubtasks,
   type ChatFn,
@@ -52,6 +53,7 @@ import { todayISO } from "../util";
 import { appendLog, type SmartNoteLogEntry } from "./logger";
 import { parseMenuItems, type MenuIndex } from "./menuItems";
 import { parseGroceryUnits, type GroceryUnitIndex } from "./groceryUnits";
+import { pinnedFolderFor } from "./router";
 
 const MENU_ITEMS_PATH = "Reference HUB/Menu Items.md";
 const GROCERY_UNITS_PATH = "Reference HUB/Grocery Units.md";
@@ -281,6 +283,7 @@ export class SmartNoteView extends ItemView {
 
   private expandMeals = false;
   private expandMenuNumbers = false;
+  private groceryOrigins = true;
   private menuIndex: MenuIndex | null = null;
   private groceryUnits: GroceryUnitIndex | null = null;
 
@@ -346,6 +349,15 @@ export class SmartNoteView extends ItemView {
         .addToggle((t) => {
           t.setValue(this.expandMeals);
           t.onChange((v) => (this.expandMeals = v));
+        });
+      new Setting(el)
+        .setName("Show which dish each item is for")
+        .setDesc(
+          "Appends \"(from D9, L19)\" to every ingredient that came from a menu number. Menu ingredients are merged and sorted into departments in code — the model only sees extra items you name.",
+        )
+        .addToggle((t) => {
+          t.setValue(this.groceryOrigins);
+          t.onChange((v) => (this.groceryOrigins = v));
         });
     }
 
@@ -415,6 +427,7 @@ export class SmartNoteView extends ItemView {
         expandMenuNumbers: this.expandMenuNumbers,
         menuIndex,
         groceryUnits,
+        groceryOrigins: this.groceryOrigins,
       });
       this.renderPhase();
     });
@@ -440,9 +453,15 @@ export class SmartNoteView extends ItemView {
 
     const row = el.createDiv({ cls: "modal-button-container" });
     const next = row.createEl("button", { text: "Answer", cls: "mod-cta" });
-    next.addEventListener("click", () => {
+    next.addEventListener("click", async () => {
       if (answer.trim()) this.followUpsAnswered++;
-      this.session = answerFollowUp(this.session, answer);
+      if (q.kind === "grocery-extras") {
+        next.disabled = true;
+        next.textContent = "Sorting…";
+        this.session = await answerGroceryExtras(this.session, answer, { expandMeals: this.expandMeals });
+      } else {
+        this.session = answerFollowUp(this.session, answer);
+      }
       this.renderPhase();
     });
     row.createEl("button", { text: "Skip" }).addEventListener("click", () => {
@@ -501,15 +520,18 @@ export class SmartNoteView extends ItemView {
 
     // Folder
     const folders = this.listPickableFolders();
-    let folder = folders.includes(plan.folder.folder) ? plan.folder.folder : "";
+    const pinned = pinnedFolderFor(this.session.template?.basename ?? "");
+    let folder = pinned ?? (folders.includes(plan.folder.folder) ? plan.folder.folder : "");
     new Setting(el)
       .setName("Folder")
       .setDesc(plan.folder.reason)
       .addDropdown((d) => {
         d.addOption("", "(vault root)");
+        if (pinned && !folders.includes(pinned)) d.addOption(pinned, pinned);
         for (const f of folders) d.addOption(f, f);
         d.setValue(folder);
         d.onChange((v) => (folder = v));
+        if (pinned) d.setDisabled(true);
       });
 
     // Hub link checkbox

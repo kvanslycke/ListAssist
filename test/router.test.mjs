@@ -20,7 +20,7 @@ const ENUM = [
 
 test("lastUsed wins when present and in enum", () => {
   const r = suggestFolder({
-    templateBasename: "Grocery List Template",
+    templateBasename: "Person Template",
     folderEnum: ENUM,
     lastUsed: "Weird Folder",
     modelPick: { folder: "People HUB", reason: "nope" },

@@ -41,10 +41,26 @@ export interface RoutingResult {
   reason: string;
 }
 
+// Templates whose destination is fixed by Kevin's decision (2026-10-24:
+// grocery lists always land in Shopping HUB). Pinned folders win over
+// last-used memory and the model's pick, and the view locks the
+// dropdown. The folder is created on save if it does not exist.
+export const PINNED_FOLDERS: ReadonlyMap<string, string> = new Map([
+  ["Grocery List Template", "Shopping HUB"],
+]);
+
+export function pinnedFolderFor(templateBasename: string): string | null {
+  return PINNED_FOLDERS.get(templateBasename) ?? null;
+}
+
 export function suggestFolder(input: RoutingInput): RoutingResult {
   const seeds = input.seedTable ?? DEFAULT_SEED_TABLE;
   const inEnum = (f: string): boolean => input.folderEnum.includes(f);
 
+  const pinned = pinnedFolderFor(input.templateBasename);
+  if (pinned) {
+    return { folder: pinned, reason: `Always ${pinned} for this template (pinned).` };
+  }
   if (input.lastUsed && inEnum(input.lastUsed)) {
     return { folder: input.lastUsed, reason: "Last folder you used for this template." };
   }

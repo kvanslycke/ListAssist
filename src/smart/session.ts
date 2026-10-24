@@ -21,6 +21,13 @@ import {
   convertIngredient,
   type GroceryUnitIndex,
 } from "./groceryUnits";
+import {
+  buildGroceryItems,
+  mergeItemsIntoExtracted,
+  stripEmptyCheckboxes,
+  type GroceryItem,
+  type SourcedIngredient,
+} from "./groceryList";
 import { renderMealPlanner, type MealPlannerArtifact } from "./mealPlanner";
 import {
   createTodoLoop,
@@ -62,10 +69,13 @@ export type ChatFn = (req: {
 }) => Promise<{ parsed: unknown; retried: boolean }>;
 
 export interface FollowUpQuestion {
-  kind: "ask-field" | "gap";
+  kind: "ask-field" | "gap" | "grocery-extras";
   field?: string;         // present for ask-field
   prompt: string;
 }
+
+export const GROCERY_EXTRAS_PROMPT =
+  "Anything else not from the menu? Name items for Produce, Meat, Dairy, Pantry, Household or Pets/Ranch (or Skip).";
 
 export type SessionKind = "default" | "todo-loop";
 
@@ -81,6 +91,11 @@ export interface SessionState {
   error: string | null;
   warnings: string[];
   menuExpansion: ExpansionResult | null;
+  // Grocery: the deterministic, merged, department-sorted items built
+  // from the expanded menu IDs (never seen by the LLM).
+  groceryItems: GroceryItem[];
+  // Grocery: append "(from D9, L19)" to each menu-derived line.
+  groceryOrigins: boolean;
   // The To-Do List template drives a multi-note loop instead of the
   // one-note extract/review flow. Non-null only when kind is
   // "todo-loop".
@@ -101,6 +116,8 @@ export function createSession(deps: SessionDeps): SessionState {
     error: null,
     warnings: [],
     menuExpansion: null,
+    groceryItems: [],
+    groceryOrigins: true,
     kind: "default",
     todoLoop: null,
   };
@@ -219,6 +236,8 @@ export interface CaptureOptions {
   expandMenuNumbers?: boolean;        // Grocery-only: expand menu IDs via Reference HUB/Menu Items.md
   menuIndex?: MenuIndex | null;       // required when expandMenuNumbers is true
   groceryUnits?: GroceryUnitIndex | null; // optional; Grocery-only: translate recipe units into store purchase units + drop staples
+  groceryOrigins?: boolean;           // Grocery-only: "(from D9, L19)" suffix on menu-derived lines (default true)
+  askGroceryExtras?: boolean;         // Grocery-only: queue the "anything else?" follow-up after menu expansion (default true)
 }
 
 export async function submitCapture(
@@ -232,7 +251,11 @@ export async function submitCapture(
   const base = { ...session, transcript, state: "extract" as State };
   const warnings: string[] = [];
   let menuExpansion: ExpansionResult | null = null;
+  let groceryItems: GroceryItem[] = [];
   let promptTranscript = transcript;
+  const isGrocery = /grocery/i.test(session.template.basename);
+  const groceryOrigins = opts.groceryOrigins ?? session.groceryOrigins ?? true;
+  const sectionHeadings = session.schema.bodySections.map((s) => s.heading);
 
   if (opts.expandMenuNumbers === true && opts.menuIndex) {
     const ids = extractMenuIds(transcript);
@@ -244,29 +267,44 @@ export async function submitCapture(
       for (const id of menuExpansion.unfilledIds) {
         warnings.push(`Menu ID ${id} has no ingredients filled in yet`);
       }
-      const promptLines = formatForGroceryPrompt(menuExpansion.ingredients, opts.groceryUnits ?? null);
-      const expandedLines = promptLines.join("\n");
-      const remainder = stripMenuIdsFromUtterance(transcript);
-      const header =
-        expandedLines.length > 0
-          ? `FROM MENU LOOKUP (please classify each into a grocery section, preserve its quantity text):\n${expandedLines}`
-          : "";
-      const extras = remainder ? `ADDITIONAL ITEMS THE USER MENTIONED:\n${remainder}` : "";
-      promptTranscript = [header, extras].filter((s) => s.length > 0).join("\n\n");
-      if (!promptTranscript) promptTranscript = transcript;
+      // Deterministic path: clean → convert → merge → department, in
+      // code. The model never sees these lines (it used to rewrite,
+      // duplicate and drop them).
+      groceryItems = buildGroceryItems(
+        sourcedIngredients(menuExpansion),
+        opts.groceryUnits ?? null,
+        sectionHeadings,
+      );
+      // Only the free-text remainder (extra items, ad-hoc meals) goes
+      // to the model. Nothing left → no model call at all.
+      promptTranscript = stripMenuIdsFromUtterance(transcript);
     }
   }
 
   try {
-    const prompt = buildExtractionPrompt(
-      session.schema,
-      promptTranscript,
-      session.template.basename,
-      opts,
+    let extracted: Record<string, unknown> = {};
+    // "D22 and D43" leaves "and" after the IDs are stripped; connector
+    // words alone are not content.
+    const remainderHasContent = /[a-z0-9]/i.test(
+      promptTranscript.replace(/\b(?:and|plus|also|then|with|too|please|menu|number|numbers|dishes?)\b/gi, ""),
     );
-    const resp = await session.deps.chat(prompt);
-    const extracted = asRecord(resp.parsed);
+    if (remainderHasContent) {
+      const prompt = buildExtractionPrompt(
+        session.schema,
+        promptTranscript,
+        session.template.basename,
+        opts,
+      );
+      const resp = await session.deps.chat(prompt);
+      extracted = asRecord(resp.parsed);
+    }
+    if (groceryItems.length > 0) {
+      extracted = mergeItemsIntoExtracted(extracted, groceryItems, sectionHeadings, groceryOrigins);
+    }
     const queue = buildInitialFollowUpQueue(session.schema, extracted, session.deps.maxFollowUps ?? 3);
+    if (isGrocery && menuExpansion && menuExpansion.found.length > 0 && (opts.askGroceryExtras ?? true)) {
+      queue.push({ kind: "grocery-extras", prompt: GROCERY_EXTRAS_PROMPT });
+    }
     return {
       ...base,
       extracted,
@@ -274,10 +312,80 @@ export async function submitCapture(
       state: queue.length > 0 ? "followUp" : "review",
       warnings,
       menuExpansion,
+      groceryItems,
+      groceryOrigins,
     };
   } catch (e) {
-    return { ...base, state: "error", error: (e as Error).message, warnings, menuExpansion };
+    return { ...base, state: "error", error: (e as Error).message, warnings, menuExpansion, groceryItems, groceryOrigins };
   }
+}
+
+// Re-walk the found dishes so every ingredient carries its dish ID.
+// (expandIds sums across dishes and loses provenance; we need it for
+// the "(from …)" annotation and for merging by canonical row.)
+function sourcedIngredients(exp: ExpansionResult): SourcedIngredient[] {
+  const out: SourcedIngredient[] = [];
+  for (const dish of exp.found) {
+    for (const ing of dish.ingredients) out.push({ ...ing, sourceId: dish.id });
+  }
+  return out;
+}
+
+// The "anything else?" follow-up: classify the answer with the model
+// (same classifier prompt, no menu lines) and merge into the sections.
+// Async because it talks to Ollama; the view calls this instead of
+// answerFollowUp when the head of the queue is kind "grocery-extras".
+export async function answerGroceryExtras(
+  session: SessionState,
+  answer: string,
+  opts: CaptureOptions = {},
+): Promise<SessionState> {
+  if (session.state !== "followUp" || !session.template || !session.schema) return session;
+  const current = session.followUps[0];
+  if (!current || current.kind !== "grocery-extras") return answerFollowUp(session, answer);
+  const rest = session.followUps.slice(1);
+  const asked = session.followUpsAsked + 1;
+  const trimmed = answer.trim();
+  if (!trimmed || /^(skip|none|no|nothing|nope|done)\.?$/i.test(trimmed)) {
+    return { ...session, followUps: rest, followUpsAsked: asked, state: rest.length === 0 ? "review" : "followUp" };
+  }
+  try {
+    const prompt = buildExtractionPrompt(session.schema, trimmed, session.template.basename, {
+      ...opts,
+      expandMenuNumbers: false,
+    });
+    const resp = await session.deps.chat(prompt);
+    const more = asRecord(resp.parsed);
+    const extracted = mergeSectionArrays(session.extracted, more, session.schema.bodySections.map((s) => s.heading));
+    return { ...session, extracted, followUps: rest, followUpsAsked: asked, state: rest.length === 0 ? "review" : "followUp" };
+  } catch (e) {
+    return { ...session, state: "error", error: (e as Error).message };
+  }
+}
+
+// Section arrays append (dedupe exact lines); scalar fields follow the
+// usual non-empty-wins rule.
+function mergeSectionArrays(
+  prev: Record<string, unknown>,
+  next: Record<string, unknown>,
+  sectionHeadings: readonly string[],
+): Record<string, unknown> {
+  const out = mergeExtracted(prev, next);
+  for (const h of sectionHeadings) {
+    const a = Array.isArray(prev[h]) ? (prev[h] as unknown[]).filter((x): x is string => typeof x === "string") : [];
+    const b = Array.isArray(next[h]) ? (next[h] as unknown[]).filter((x): x is string => typeof x === "string") : [];
+    if (a.length === 0 && b.length === 0) continue;
+    const seen = new Set<string>();
+    const merged: string[] = [];
+    for (const s of [...a, ...b]) {
+      const t = s.trim();
+      if (!t || seen.has(t.toLowerCase())) continue;
+      seen.add(t.toLowerCase());
+      merged.push(t);
+    }
+    out[h] = merged;
+  }
+  return out;
 }
 
 // Format the summed ingredients as the prompt lines the LLM sees for
@@ -541,9 +649,17 @@ export function prepareReview(
     session.menuExpansion.found.length > 0
   ) {
     rendered.body = injectDishesSection(rendered.body, session.menuExpansion.found);
+    // `meals:` frontmatter lists the dish IDs (the template's `[]`
+    // reads as pre-set, so the field resolver never fills it).
+    if ("meals" in rendered.frontmatter) {
+      rendered.frontmatter.meals = session.menuExpansion.found.map((d) => d.id);
+    }
     // And emit the sibling Meal Planner note. Same date, same folder;
     // the writer handles filename collisions independently.
     extraArtifacts.push(renderMealPlanner(session.menuExpansion.found, session.deps.nowISODate()));
+  }
+  if (/grocery/i.test(session.template.basename)) {
+    rendered.body = stripEmptyCheckboxes(rendered.body);
   }
   const folder = suggestFolder({
     templateBasename: session.template.basename,
