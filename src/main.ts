@@ -225,7 +225,7 @@ export default class ListAssistantPlugin extends Plugin {
       for (const e of summary.errors) console.error("List Assistant calendar sync:", e);
     }
     new Notice(
-      `Calendar sync\n+${summary.created} created · ${summary.updated} updated${errPart}`,
+      `Calendar sync\n+${summary.created} created · ${summary.updated} updated · ${summary.deleted} reconciled${errPart}`,
     );
   }
 

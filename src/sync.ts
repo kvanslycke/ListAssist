@@ -1,5 +1,5 @@
 import { App, TFile, normalizePath } from "obsidian";
-import { CalendarClient, CalendarEventSpec, EVENT_TAG } from "./calendar";
+import { CalendarClient, CalendarEventSpec, EventReminders, EVENT_TAG } from "./calendar";
 import { parseRapidsSchedules } from "./rapids";
 import { parsePriority } from "./triage";
 import { InvalidGrantError } from "./oauth";
@@ -7,6 +7,17 @@ import { InvalidGrantError } from "./oauth";
 export const TIMEZONE = "America/Denver";
 const STATUS_DONE = new Set(["done", "completed", "complete", "cancelled", "canceled"]);
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+// Google Calendar fixed color ids. See
+// https://developers.google.com/calendar/api/v3/reference/colors/get
+// for the full palette. Only the colors the plugin actually uses are
+// named here so a future palette change is a single-line edit.
+const COLOR_TOMATO = "11";    // red       — Q1 due events (notifying)
+const COLOR_TANGERINE = "6";  // orange    — Q2 reminders (silent)
+const COLOR_BASIL = "10";     // green     — Rapids-class routine chain (silent)
+
+const REMINDERS_DEFAULT: EventReminders = { useDefault: true };
+const REMINDERS_SILENT: EventReminders = { useDefault: false, overrides: [] };
 
 export interface SyncOptions {
   q1StartHour: number;
@@ -21,9 +32,14 @@ export interface SyncOptions {
 export interface SyncSummary {
   created: number;
   updated: number;
+  deleted: number;
   skippedFiles: number;
   scannedFiles: number;
   errors: string[];
+}
+
+function specKey(sourceKey: string, kind: string): string {
+  return `${sourceKey}::${kind}`;
 }
 
 function pad(n: number): string {
@@ -110,6 +126,8 @@ export async function buildEventSpecs(
             dateTime: `${dateStr}T${pad(endHour)}:${pad(endMinute)}:00`,
             timeZone: TIMEZONE,
           },
+          colorId: COLOR_BASIL,
+          reminders: REMINDERS_SILENT,
         });
         contributed = true;
       }
@@ -125,6 +143,8 @@ export async function buildEventSpecs(
           kind: "due-q1",
           summary: file.basename,
           description: `${EVENT_TAG} Q1 due today\nFrom [[${file.basename}]]`,
+          colorId: COLOR_TOMATO,
+          reminders: REMINDERS_DEFAULT,
           start: {
             dateTime: `${due}T${pad(opts.q1StartHour)}:${pad(opts.q1StartMinute)}:00`,
             timeZone: TIMEZONE,
@@ -142,6 +162,8 @@ export async function buildEventSpecs(
           kind: "due-q2-reminder",
           summary: `Reminder: ${file.basename} (due ${due})`,
           description: `${EVENT_TAG} Q2 reminder ${opts.q2ReminderDays}d before due\nFrom [[${file.basename}]]`,
+          colorId: COLOR_TANGERINE,
+          reminders: REMINDERS_SILENT,
           start: { date: reminder },
           end: { date: reminder },
         });
@@ -163,6 +185,7 @@ export async function syncCalendar(
   const { specs, scanned, skipped } = await buildEventSpecs(app, opts);
   let created = 0;
   let updated = 0;
+  let deleted = 0;
   const errors: string[] = [];
 
   // Pre-flight: one authenticated call so bad auth surfaces once, not N times.
@@ -181,9 +204,39 @@ export async function syncCalendar(
       errors.push(`${spec.sourceKey} (${spec.kind}): ${(e as Error).message}`);
     }
   }
+
+  // Reconcile: any plugin-owned event on the calendar whose
+  // (sourceKey, kind) is not in the current spec set is an orphan
+  // (status: done, note deleted/renamed, priority dropped, due removed)
+  // and gets deleted. Scope is narrow — only events tagged
+  // `listAssistantOwned=1` by this plugin are considered, so manually
+  // created events and events from other sources are never touched.
+  const wanted = new Set<string>();
+  for (const s of specs) wanted.add(specKey(s.sourceKey, s.kind));
+  try {
+    const owned = await client.listOwned();
+    for (const ev of owned) {
+      if (wanted.has(specKey(ev.sourceKey, ev.kind))) continue;
+      try {
+        await client.deleteById(ev.id);
+        deleted++;
+      } catch (e) {
+        if (e instanceof InvalidGrantError) throw e;
+        errors.push(`[reconcile] ${ev.sourceKey} (${ev.kind}): ${(e as Error).message}`);
+      }
+    }
+  } catch (e) {
+    if (e instanceof InvalidGrantError) throw e;
+    // A reconcile-list failure must not hide upsert successes;
+    // record it and continue. Note the kind on the message so a
+    // reader can see the whole call failed, not a specific event.
+    errors.push(`[reconcile:list] ${(e as Error).message}`);
+  }
+
   return {
     created,
     updated,
+    deleted,
     skippedFiles: skipped,
     scannedFiles: scanned,
     errors: dedupeErrors(errors),

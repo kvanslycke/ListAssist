@@ -10,10 +10,21 @@ export const PROP_OWNED = "listAssistantOwned";
 
 export type EventKind = "due-q1" | "due-q2-reminder" | "rapids-class";
 
+export const KNOWN_EVENT_KINDS: ReadonlySet<EventKind> = new Set<EventKind>([
+  "due-q1",
+  "due-q2-reminder",
+  "rapids-class",
+]);
+
 export interface EventDateTime {
   dateTime?: string;
   date?: string;
   timeZone?: string;
+}
+
+export interface EventReminders {
+  useDefault: boolean;
+  overrides?: Array<{ method: "popup" | "email"; minutes: number }>;
 }
 
 export interface CalendarEventSpec {
@@ -23,6 +34,20 @@ export interface CalendarEventSpec {
   description: string;
   start: EventDateTime;
   end: EventDateTime;
+  // Google Calendar fixed color id ("1".."11"). Omit to leave the
+  // event's color at the calendar default.
+  colorId?: string;
+  // Omit to leave reminders at whatever Google Calendar is currently
+  // doing. Set `{useDefault: true}` to inherit the calendar's default
+  // notification, or `{useDefault: false, overrides: []}` to silence
+  // the event entirely.
+  reminders?: EventReminders;
+}
+
+export interface OwnedEvent {
+  id: string;
+  sourceKey: string;
+  kind: EventKind;
 }
 
 interface RawEvent {
@@ -101,7 +126,7 @@ export class CalendarClient {
 
   async upsert(spec: CalendarEventSpec): Promise<{ id: string; created: boolean }> {
     const existing = await this.findExisting(spec.sourceKey, spec.kind);
-    const body = {
+    const body: Record<string, unknown> = {
       summary: spec.summary,
       description: spec.description,
       start: spec.start,
@@ -114,6 +139,8 @@ export class CalendarClient {
         },
       },
     };
+    if (spec.colorId) body.colorId = spec.colorId;
+    if (spec.reminders) body.reminders = spec.reminders;
     if (existing) {
       const updated = (await this.apiFetch(
         `/calendars/${this.encodeCalendarId()}/events/${existing.id}`,
@@ -132,6 +159,37 @@ export class CalendarClient {
     await this.apiFetch(`/calendars/${this.encodeCalendarId()}/events/${id}`, {
       method: "DELETE",
     });
+  }
+
+  // All events on this calendar carrying the plugin's ownership tag.
+  // Pages through results; skips any owned event whose kind is not in
+  // KNOWN_EVENT_KINDS so an older plugin version's events are left alone.
+  async listOwned(): Promise<OwnedEvent[]> {
+    const out: OwnedEvent[] = [];
+    let pageToken: string | undefined;
+    do {
+      const params = new URLSearchParams({
+        privateExtendedProperty: `${PROP_OWNED}=1`,
+        maxResults: "250",
+        showDeleted: "false",
+      });
+      if (pageToken) params.set("pageToken", pageToken);
+      const data = (await this.apiFetch(
+        `/calendars/${this.encodeCalendarId()}/events?${params}`,
+      )) as { items?: RawEvent[]; nextPageToken?: string };
+      const items = data.items ?? [];
+      for (const e of items) {
+        const priv = e.extendedProperties?.private;
+        if (!priv) continue;
+        const sourceKey = priv[PROP_SOURCE];
+        const kind = priv[PROP_KIND] as EventKind | undefined;
+        if (!sourceKey || !kind) continue;
+        if (!KNOWN_EVENT_KINDS.has(kind)) continue;
+        out.push({ id: e.id, sourceKey, kind });
+      }
+      pageToken = data.nextPageToken;
+    } while (pageToken);
+    return out;
   }
 
   async whoAmI(): Promise<string> {
