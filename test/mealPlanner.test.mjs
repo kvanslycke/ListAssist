@@ -63,7 +63,7 @@ test("renderMealPlanner header, title, basename, folder", () => {
   const out = renderMealPlanner([dish({ id: "BM9", dish: "Ramekin Denver Egg Bake", section: "Breakfast" })], "2026-10-15");
   assert.equal(out.suggestedBasename, "Meal Planner — 2026-10-15");
   assert.equal(out.folder, "Health HUB/Meal Planning");
-  assert.match(out.body, /^---\ntags: \[meal-planner\]\ncreated: 2026-10-15\n---\n\n# Meal Planner — 2026-10-15\n/);
+  assert.match(out.body, /^---\ntags: \[meal-planner\]\ncreated: 2026-10-15\nperiod: ""\nmeals:\n(?:  - \w+\n)+---\n\n# Meal Planner — 2026-10-15\n/);
 });
 
 test("renderMealPlanner top ## Dishes summary lists every dish", () => {
@@ -99,9 +99,9 @@ test("renderMealPlanner section order and per-dish body", () => {
   assert.ok(indices[0] < indices[1], "Breakfast before Lunch");
   assert.ok(indices[1] < indices[2], "Lunch before Dessert");
   // Per-dish entries.
-  assert.match(out.body, /### B2 — Chorizo Burrito\nRecipe: \[\[Recipes#B2\]\]/);
-  assert.match(out.body, /### L22 — Caesar Wrap\nRecipe: \[\[Recipes#L22\]\]/);
-  assert.match(out.body, /### DS1 — Fried Ice Cream\nRecipe: \[\[Recipes#DS1\]\]/);
+  assert.match(out.body, /### B2 — Chorizo Burrito\nRecipe: \[\[Health HUB\/Recipes#B2 — Chorizo Burrito\|B2\]\]/);
+  assert.match(out.body, /### L22 — Caesar Wrap\nRecipe: \[\[Health HUB\/Recipes#L22 — Caesar Wrap\|L22\]\]/);
+  assert.match(out.body, /### DS1 — Fried Ice Cream\nRecipe: \[\[Health HUB\/Recipes#DS1 — Fried Ice Cream\|DS1\]\]/);
 });
 
 test("renderMealPlanner hides empty sections", () => {
@@ -129,7 +129,7 @@ test("renderMealPlanner emits ingredient lines when ingredients are present", ()
     ],
     "2026-10-15",
   );
-  assert.match(out.body, /### BM9 — Egg Bake\nRecipe: \[\[Recipes#BM9\]\]\n- 4 eggs\n- 2 tbsp milk/);
+  assert.match(out.body, /### BM9 — Egg Bake\nRecipe: \[\[Health HUB\/Recipes#BM9 — Egg Bake\|BM9\]\]\n- 4 eggs\n- 2 tbsp milk/);
 });
 
 test("renderMealPlanner tolerates a dish with no ingredients", () => {
@@ -138,7 +138,7 @@ test("renderMealPlanner tolerates a dish with no ingredients", () => {
     "2026-10-15",
   );
   // Heading + Recipe link present; no bullet lines follow before EOF.
-  assert.match(out.body, /### B99 — Mystery\nRecipe: \[\[Recipes#B99\]\]\n*$/);
+  assert.match(out.body, /### B99 — Mystery\nRecipe: \[\[Health HUB\/Recipes#B99 — Mystery\|B99\]\]\n\n## Links/);
 });
 
 test("renderMealPlanner ends with a single trailing newline", () => {

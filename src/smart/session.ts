@@ -7,7 +7,7 @@
 
 import { classifyTemplate, type TemplateSchema, type ClassifiedField } from "./templateSchema";
 import { renderNote, type RenderResult } from "./writer-core";
-import { suggestFolder, tripPackingFolder, type RoutingResult } from "./router";
+import { suggestFolder, tripPackingFolder, pinnedFolderFor, type RoutingResult } from "./router";
 import {
   expandIds,
   extractMenuIds,
@@ -28,7 +28,7 @@ import {
   type GroceryItem,
   type SourcedIngredient,
 } from "./groceryList";
-import { renderMealPlanner, type MealPlannerArtifact } from "./mealPlanner";
+import { renderMealPlanner, DEFAULT_MEAL_PLANNER_FOLDER, type MealPlannerArtifact } from "./mealPlanner";
 import {
   createTodoLoop,
   parseLlmSubtasks,
@@ -654,9 +654,20 @@ export function prepareReview(
     if ("meals" in rendered.frontmatter) {
       rendered.frontmatter.meals = session.menuExpansion.found.map((d) => d.id);
     }
-    // And emit the sibling Meal Planner note. Same date, same folder;
-    // the writer handles filename collisions independently.
-    extraArtifacts.push(renderMealPlanner(session.menuExpansion.found, session.deps.nowISODate()));
+    // And emit the sibling Meal Planner note (routed to its own
+    // folder); the two notes link to each other. The writer handles
+    // filename collisions independently, so a "(2)" suffix on either
+    // side would leave one link pointing at the first copy.
+    const today = session.deps.nowISODate();
+    const planner = renderMealPlanner(session.menuExpansion.found, today, {
+      period: typeof session.extracted.period === "string" ? session.extracted.period : "",
+      groceryNotePath: `${pinnedFolderFor(session.template.basename) ?? "Shopping HUB"}/${title}`,
+    });
+    extraArtifacts.push(planner);
+    rendered.body = appendLink(
+      rendered.body,
+      `[[${planner.folder ?? DEFAULT_MEAL_PLANNER_FOLDER}/${planner.suggestedBasename}|Meal Planner]]`,
+    );
   }
   if (/grocery/i.test(session.template.basename)) {
     rendered.body = stripEmptyCheckboxes(rendered.body);
@@ -717,6 +728,24 @@ function asString(v: unknown): string {
 // lives above the Produce/Meat/Pantry sections but below the title).
 // If no H1, prepend to the body. Idempotent on repeat renders —
 // replaces any existing "## Dishes" section.
+// Add one bullet to the body's "## Links" section (created at the end
+// when the template has none). Idempotent.
+export function appendLink(body: string, link: string): string {
+  if (body.includes(link)) return body;
+  const lines = body.split("\n");
+  const idx = lines.findIndex((l) => /^##\s+Links\s*$/.test(l));
+  if (idx < 0) {
+    return body.replace(/\s*$/, "") + `\n\n## Links\n- ${link}\n`;
+  }
+  let end = idx + 1;
+  while (end < lines.length && !/^#{1,6}\s/.test(lines[end])) end++;
+  // insert after the last non-empty line of the section
+  let at = end;
+  while (at > idx + 1 && lines[at - 1].trim() === "") at--;
+  lines.splice(at, 0, `- ${link}`);
+  return lines.join("\n");
+}
+
 export function injectDishesSection(body: string, dishes: readonly { id: string; dish: string }[]): string {
   if (dishes.length === 0) return body;
   const lines = dishes.map((d) => `- ${d.id} — ${d.dish}`).join("\n");

@@ -331,3 +331,58 @@ test("ZE (Zero Effort) prefix resolves like the others", async () => {
   const idx = pmi("## Breakfast\n| ID | Dish | Ingredients |\n|---|---|---|\n| ZE4 | Frozen Waffles | frozen waffles: 4 whole; maple syrup: 0.25 cup |\n");
   assert.equal(idx.byId.get("ZE4").category, "Zero Effort");
 });
+
+// -- Meal Planner (2026-10-24: schedule grid, Meal column, cross-links) --
+
+test("periodDays parses ranges, counts and defaults", async () => {
+  const { periodDays } = await import("../.test-build/smart/mealPlanner.js");
+  const r = periodDays("10/24 - 10/27", "2026-10-24");
+  assert.deepEqual(r.labels, ["Sat 10/24", "Sun 10/25", "Mon 10/26", "Tue 10/27"]);
+  assert.equal(r.parsed, true);
+  assert.equal(periodDays("2 weeks", "2026-10-24").labels.length, 14);
+  assert.equal(periodDays("Next 3 Days", "2026-10-24").labels.length, 3);
+  assert.equal(periodDays("Ranch Weekend", "2026-10-24").labels.length, 3);
+  const d = periodDays("", "2026-10-24");
+  assert.equal(d.labels.length, 7);
+  assert.equal(d.parsed, false);
+  assert.equal(periodDays("12/30 - 1/2", "2026-12-28").labels.length, 4);
+});
+
+test("planner: Meal column overrides section, schedule spreads dishes, links both ways", async () => {
+  const { renderMealPlanner, mealTypeFor, recipeHeading } = await import("../.test-build/smart/mealPlanner.js");
+  const { parseMenuItems } = await import("../.test-build/smart/menuItems.js");
+  const menu = parseMenuItems(`## Dinner
+| ID | Dish | Ingredients | Meal |
+|---|---|---|---|
+| MK14 | Balsamic Peach & Brie Tart | peaches: 2 medium; brie: 4 oz | Dessert |
+| MK8 | Smothered Pork Chops | pork chops: 12 oz | |
+| D22 | Sausage & Peppers Skillet | kielbasa: 8 oz |  |
+## Breakfast
+| ID | Dish | Ingredients |
+|---|---|---|
+| B26 | French Toast | eggs: 3 whole |
+`);
+  assert.equal(menu.byId.get("MK14").meal, "Dessert");
+  assert.equal(mealTypeFor(menu.byId.get("MK14")), "Dessert");
+  assert.equal(mealTypeFor(menu.byId.get("MK8")), "Dinner");
+  const dishes = ["B26", "MK8", "D22", "MK14"].map((i) => menu.byId.get(i));
+  const art = renderMealPlanner(dishes, "2026-10-24", { period: "10/24 - 10/27", groceryNotePath: "Shopping HUB/Grocery List — 2026-10-24" });
+  assert.equal(art.folder, "Health HUB/Meal Planning");
+  assert.match(art.body, /^period: "10\/24 - 10\/27"$/m);
+  assert.match(art.body, /^meals:\n  - B26\n  - MK8\n  - D22\n  - MK14$/m);
+  assert.match(art.body, /## Schedule[\s\S]*\| Day \| Breakfast \| Lunch \| Dinner \| Dessert \|/);
+  assert.match(art.body, /\| Sat 10\/24 \| B26 \|  \| D22 \| MK14 \|/);   // 2 dinners over 4 days → days 0 and 2
+  assert.match(art.body, /\| Mon 10\/26 \|  \|  \| MK8 \|  \|/);
+  assert.match(art.body, /Recipe: \[\[Health HUB\/Recipes#MK14 — Balsamic Peach & Brie Tart\|MK14\]\]/);
+  assert.match(art.body, /## Links\n- \[\[Shopping HUB\/Grocery List — 2026-10-24\|Grocery List\]\]/);
+  assert.equal(recipeHeading({ id: "L10", dish: "Mac [and] Cheese #1 | bake" }), "L10 — Mac and Cheese 1 bake");
+});
+
+test("grocery note links to its planner", async () => {
+  const { appendLink } = await import("../.test-build/smart/session.js");
+  const body = "# G\n\n## Produce\n- [ ] x\n\n## Links\n- [[Shopping Main]]\n- [[Menu Items]]\n";
+  const out = appendLink(body, "[[Health HUB/Meal Planning/Meal Planner — 2026-10-24|Meal Planner]]");
+  assert.match(out, /## Links\n- \[\[Shopping Main\]\]\n- \[\[Menu Items\]\]\n- \[\[Health HUB\/Meal Planning\/Meal Planner — 2026-10-24\|Meal Planner\]\]\n/);
+  assert.equal(appendLink(out, "[[Health HUB/Meal Planning/Meal Planner — 2026-10-24|Meal Planner]]"), out);
+  assert.match(appendLink("# G\n- [ ] x\n", "[[P]]"), /\n\n## Links\n- \[\[P\]\]\n$/);
+});

@@ -19,6 +19,7 @@ export interface MenuItem {
   category: string;    // ID-prefix category: "Breakfast" | "Lunch" | "Dinner" | "Dessert" | "Snack" | "Side" | "Baking" | "Middle Kitchen" | ...
   section: string;     // Containing Menu Items.md H2 heading: "Breakfast" | "Lunch" | "Dinner" | "Ranch Dishes" | ...; "" if the row preceded any heading.
   ingredients: Ingredient[]; // empty array when the Ingredients cell is blank
+  meal: string;        // optional 4th "Meal" column: Breakfast | Lunch | Dinner | Snack | Dessert | Sides | Baking | Fondue | Pizza; "" when absent. Overrides the section on the Meal Planner.
 }
 
 export interface MenuIndex {
@@ -70,6 +71,7 @@ export function parseMenuItems(content: string): MenuIndex {
     const id = m[1].toUpperCase();
     const dish = m[2].trim();
     const ingredientsCell = m[3].trim();
+    const meal = normalizeMeal(m[4] ?? "");
     if (!dish || dish.toLowerCase() === "dish") continue; // skip header rows
     const prefixMatch = ID_PREFIX_RE.exec(id);
     if (!prefixMatch) continue;
@@ -82,9 +84,20 @@ export function parseMenuItems(content: string): MenuIndex {
       category,
       section: currentSection,
       ingredients: ingredientsCell ? parseIngredientList(ingredientsCell) : [],
+      meal,
     });
   }
   return { byId };
+}
+
+const MEAL_WORDS: Record<string, string> = {
+  breakfast: "Breakfast", lunch: "Lunch", dinner: "Dinner", snack: "Snack", snacks: "Snack",
+  dessert: "Dessert", desserts: "Dessert", side: "Sides", sides: "Sides", baking: "Baking",
+  fondue: "Fondue", pizza: "Pizza",
+};
+// 4th-column value → canonical meal type, "" when blank/unknown.
+export function normalizeMeal(cell: string): string {
+  return MEAL_WORDS[cell.trim().toLowerCase()] ?? "";
 }
 
 function parseIngredientList(cell: string): Ingredient[] {
