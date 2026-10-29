@@ -57,6 +57,18 @@ export interface ConversionResult {
 
 const ROW_RE = /^\s*\|(.+)\|\s*$/;
 
+// Every ingredient name and alias in the table (lowercased): a spoken
+// phrase equal to one of these is a grocery item, never a dish name.
+export function knownGroceryNames(index: GroceryUnitIndex | null): Set<string> {
+  const out = new Set<string>();
+  if (!index) return out;
+  for (const r of index.rows) {
+    out.add(r.ingredient.toLowerCase());
+    for (const a of r.aliases) out.add(a.toLowerCase());
+  }
+  return out;
+}
+
 export function parseGroceryUnits(content: string): GroceryUnitIndex {
   const rows: GroceryUnitRow[] = [];
   const byLookupKey = new Map<string, GroceryUnitRow>();

@@ -21,6 +21,7 @@ import {
   submitCapture,
   answerFollowUp,
   answerGroceryExtras,
+  answerGroceryDishConfirm,
   prepareReview,
   expandTaskSubtasks,
   type ChatFn,
@@ -459,13 +460,21 @@ export class SmartNoteView extends ItemView {
         next.disabled = true;
         next.textContent = "Sorting…";
         this.session = await answerGroceryExtras(this.session, answer, { expandMeals: this.expandMeals });
+      } else if (q.kind === "grocery-dish-confirm") {
+        next.disabled = true;
+        next.textContent = "Adding…";
+        this.session = await answerGroceryDishConfirm(this.session, answer, { expandMeals: this.expandMeals });
       } else {
         this.session = answerFollowUp(this.session, answer);
       }
       this.renderPhase();
     });
-    row.createEl("button", { text: "Skip" }).addEventListener("click", () => {
-      this.session = answerFollowUp(this.session, "skip");
+    row.createEl("button", { text: "Skip" }).addEventListener("click", async () => {
+      // Skipping the dish question keeps the spoken words as items (nothing is lost).
+      this.session =
+        q.kind === "grocery-dish-confirm"
+          ? await answerGroceryDishConfirm(this.session, "no", { expandMeals: this.expandMeals })
+          : answerFollowUp(this.session, "skip");
       this.renderPhase();
     });
     row.createEl("button", { text: "Done" }).addEventListener("click", () => {

@@ -12,17 +12,21 @@ import {
   expandIds,
   extractMenuIds,
   formatIngredient,
+  matchDishNames,
   stripMenuIdsFromUtterance,
+  type DishMatch,
   type ExpansionResult,
   type Ingredient,
   type MenuIndex,
 } from "./menuItems";
 import {
   convertIngredient,
+  knownGroceryNames,
   type GroceryUnitIndex,
 } from "./groceryUnits";
 import {
   buildGroceryItems,
+  formatGroceryItem,
   mergeItemsIntoExtracted,
   stripEmptyCheckboxes,
   type GroceryItem,
@@ -69,13 +73,27 @@ export type ChatFn = (req: {
 }) => Promise<{ parsed: unknown; retried: boolean }>;
 
 export interface FollowUpQuestion {
-  kind: "ask-field" | "gap" | "grocery-extras";
+  kind: "ask-field" | "gap" | "grocery-extras" | "grocery-dish-confirm";
   field?: string;         // present for ask-field
   prompt: string;
 }
 
 export const GROCERY_EXTRAS_PROMPT =
   "Anything else not from the menu? Name items for Produce, Meat, Dairy, Pantry, Household or Pets/Ranch (or Skip).";
+
+// Asked when a dish NAME (no ID) turns up in the free text or the
+// extras answer, before it can become a grocery item.
+export function dishConfirmPrompt(matches: readonly DishMatch[], onList: readonly string[]): string {
+  const have = new Set(onList);
+  const parts = matches.map(
+    (m) => `${m.id} — ${m.dish} ("${m.phrase}")${have.has(m.id) ? " — already on the list" : ""}`,
+  );
+  return (
+    `That sounds like menu dish${matches.length > 1 ? "es" : ""}: ${parts.join("; ")}. ` +
+    `Yes = add as dish${matches.length > 1 ? "es" : ""} (ingredients from Menu Items), No = keep as grocery item${matches.length > 1 ? "s" : ""}, ` +
+    `or name the IDs to add.`
+  );
+}
 
 export type SessionKind = "default" | "todo-loop";
 
@@ -96,6 +114,11 @@ export interface SessionState {
   groceryItems: GroceryItem[];
   // Grocery: append "(from D9, L19)" to each menu-derived line.
   groceryOrigins: boolean;
+  // Grocery: kept so a confirmed dish name can be expanded later in
+  // the session, and the dish names awaiting the confirm question.
+  menuIndex: MenuIndex | null;
+  groceryUnits: GroceryUnitIndex | null;
+  pendingDishes: DishMatch[];
   // The To-Do List template drives a multi-note loop instead of the
   // one-note extract/review flow. Non-null only when kind is
   // "todo-loop".
@@ -118,6 +141,9 @@ export function createSession(deps: SessionDeps): SessionState {
     menuExpansion: null,
     groceryItems: [],
     groceryOrigins: true,
+    menuIndex: null,
+    groceryUnits: null,
+    pendingDishes: [],
     kind: "default",
     todoLoop: null,
   };
@@ -281,6 +307,17 @@ export async function submitCapture(
     }
   }
 
+  // Dish names said without an ID are held back from the model and
+  // asked about (Kevin 2026-10-29).
+  let pendingDishes: DishMatch[] = [];
+  if (isGrocery && menuExpansion && opts.menuIndex) {
+    const dm = matchDishNames(promptTranscript, opts.menuIndex, menuExpansion.found.map((d) => d.id), knownGroceryNames(opts.groceryUnits ?? null));
+    if (dm.matches.length > 0) {
+      pendingDishes = dm.matches;
+      promptTranscript = dm.rest;
+    }
+  }
+
   try {
     let extracted: Record<string, unknown> = {};
     // "D22 and D43" leaves "and" after the IDs are stripped; connector
@@ -302,6 +339,12 @@ export async function submitCapture(
       extracted = mergeItemsIntoExtracted(extracted, groceryItems, sectionHeadings, groceryOrigins);
     }
     const queue = buildInitialFollowUpQueue(session.schema, extracted, session.deps.maxFollowUps ?? 3);
+    if (pendingDishes.length > 0 && menuExpansion) {
+      queue.push({
+        kind: "grocery-dish-confirm",
+        prompt: dishConfirmPrompt(pendingDishes, menuExpansion.found.map((d) => d.id)),
+      });
+    }
     if (isGrocery && menuExpansion && menuExpansion.found.length > 0 && (opts.askGroceryExtras ?? true)) {
       queue.push({ kind: "grocery-extras", prompt: GROCERY_EXTRAS_PROMPT });
     }
@@ -314,6 +357,9 @@ export async function submitCapture(
       menuExpansion,
       groceryItems,
       groceryOrigins,
+      menuIndex: opts.menuIndex ?? null,
+      groceryUnits: opts.groceryUnits ?? null,
+      pendingDishes,
     };
   } catch (e) {
     return { ...base, state: "error", error: (e as Error).message, warnings, menuExpansion, groceryItems, groceryOrigins };
@@ -349,18 +395,106 @@ export async function answerGroceryExtras(
   if (!trimmed || /^(skip|none|no|nothing|nope|done)\.?$/i.test(trimmed)) {
     return { ...session, followUps: rest, followUpsAsked: asked, state: rest.length === 0 ? "review" : "followUp" };
   }
+  let text = trimmed;
+  let pending: DishMatch[] = [];
+  if (session.menuIndex) {
+    const dm = matchDishNames(trimmed, session.menuIndex, (session.menuExpansion?.found ?? []).map((d) => d.id), knownGroceryNames(session.groceryUnits));
+    pending = dm.matches;
+    text = dm.rest;
+  }
   try {
-    const prompt = buildExtractionPrompt(session.schema, trimmed, session.template.basename, {
-      ...opts,
-      expandMenuNumbers: false,
-    });
-    const resp = await session.deps.chat(prompt);
-    const more = asRecord(resp.parsed);
-    const extracted = mergeSectionArrays(session.extracted, more, session.schema.bodySections.map((s) => s.heading));
-    return { ...session, extracted, followUps: rest, followUpsAsked: asked, state: rest.length === 0 ? "review" : "followUp" };
+    let extracted = session.extracted;
+    if (/[a-z0-9]/i.test(text)) {
+      extracted = await classifyExtras(session, text, opts);
+    }
+    const queue = pending.length > 0
+      ? [{ kind: "grocery-dish-confirm" as const, prompt: dishConfirmPrompt(pending, (session.menuExpansion?.found ?? []).map((d) => d.id)) }, ...rest]
+      : rest;
+    return {
+      ...session,
+      extracted,
+      pendingDishes: pending.length > 0 ? pending : session.pendingDishes,
+      followUps: queue,
+      followUpsAsked: asked,
+      state: queue.length === 0 ? "review" : "followUp",
+    };
   } catch (e) {
     return { ...session, state: "error", error: (e as Error).message };
   }
+}
+
+// Model-classify free-text grocery items and append them to the sections.
+async function classifyExtras(
+  session: SessionState,
+  text: string,
+  opts: CaptureOptions,
+): Promise<Record<string, unknown>> {
+  if (!session.template || !session.schema) return session.extracted;
+  const prompt = buildExtractionPrompt(session.schema, text, session.template.basename, {
+    ...opts,
+    expandMenuNumbers: false,
+  });
+  const resp = await session.deps.chat(prompt);
+  const more = asRecord(resp.parsed);
+  return mergeSectionArrays(session.extracted, more, session.schema.bodySections.map((s) => s.heading));
+}
+
+// Answer to "That sounds like menu dish L21 …": yes adds every pending
+// dish (its ingredients go through the deterministic grocery path, no
+// model call), no sends the spoken phrases to the model as ordinary
+// items, an answer naming IDs adds only those. Skip counts as no, so
+// nothing Kevin said is lost.
+export async function answerGroceryDishConfirm(
+  session: SessionState,
+  answer: string,
+  opts: CaptureOptions = {},
+): Promise<SessionState> {
+  if (session.state !== "followUp" || !session.template || !session.schema) return session;
+  const current = session.followUps[0];
+  if (!current || current.kind !== "grocery-dish-confirm") return answerFollowUp(session, answer);
+  const rest = session.followUps.slice(1);
+  const asked = session.followUpsAsked + 1;
+  const pending = session.pendingDishes;
+  const a = answer.trim();
+  let accepted: DishMatch[];
+  if (/^(y|yes|yeah|yep|yup|sure|ok|okay|all|add|add them|correct|right)\b/i.test(a)) accepted = pending;
+  else if (!a || /^(n|no|nope|none|skip|neither|keep)\b/i.test(a)) accepted = [];
+  else accepted = pending.filter((m) => new RegExp(`\\b${m.id}\\b`, "i").test(a));
+  const rejected = pending.filter((m) => !accepted.includes(m));
+  const headings = session.schema.bodySections.map((s) => s.heading);
+  let next: SessionState = { ...session, pendingDishes: [] };
+  try {
+    const have = (session.menuExpansion?.found ?? []).map((d) => d.id);
+    const add = accepted.map((m) => m.id).filter((id) => !have.includes(id));
+    if (add.length > 0 && session.menuIndex) {
+      const exp = expandIds([...have, ...add], session.menuIndex);
+      const items = buildGroceryItems(sourcedIngredients(exp), session.groceryUnits, headings);
+      // Drop the previous menu lines, then merge the rebuilt set.
+      const old = new Set(
+        session.groceryItems.flatMap((i) => [formatGroceryItem(i, true), formatGroceryItem(i, false)].map((s) => s.trim().toLowerCase())),
+      );
+      const cleaned: Record<string, unknown> = { ...session.extracted };
+      for (const h of headings) {
+        const arr = cleaned[h];
+        if (Array.isArray(arr)) cleaned[h] = arr.filter((x) => !(typeof x === "string" && old.has(x.trim().toLowerCase())));
+      }
+      const warnings = [...session.warnings];
+      for (const id of exp.unfilledIds) if (add.includes(id)) warnings.push(`Menu ID ${id} has no ingredients filled in yet`);
+      next = {
+        ...next,
+        menuExpansion: exp,
+        groceryItems: items,
+        warnings,
+        extracted: mergeItemsIntoExtracted(cleaned, items, headings, session.groceryOrigins),
+      };
+    }
+    if (rejected.length > 0) {
+      next = { ...next, extracted: await classifyExtras(next, rejected.map((m) => m.phrase).join(", "), opts) };
+    }
+  } catch (e) {
+    return { ...session, state: "error", error: (e as Error).message };
+  }
+  return { ...next, followUps: rest, followUpsAsked: asked, state: rest.length === 0 ? "review" : "followUp" };
 }
 
 // Section arrays append (dedupe exact lines); scalar fields follow the

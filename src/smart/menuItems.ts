@@ -199,6 +199,177 @@ export function stripMenuIdsFromUtterance(utterance: string): string {
   return s;
 }
 
+// -- Dish names spoken without an ID ---------------------------
+// "maple bacon corn fritters" is L21, not a grocery item. Whisper
+// slips one letter ("Riddled" for "Griddled"), so words of 5+ letters
+// match at edit distance 1. A match needs 2+ consecutive spoken words
+// covering at least 60% of the dish name's words; commas, "plus" and
+// "also" end a run, and "and"/"&" only continue one when the dish name
+// itself contains them. Single-word dish names never match (too many
+// real groceries share a word with a dish).
+
+export interface DishMatch {
+  phrase: string; // the words as spoken
+  id: string;
+  dish: string;
+}
+
+export interface DishNameResult {
+  matches: DishMatch[];
+  rest: string; // the text with matched phrases removed
+}
+
+const DISH_STOPWORDS = new Set(["with", "the", "a", "an", "of", "or", "in", "on", "some", "style", "s"]);
+const MIN_DISH_COVERAGE = 0.6;
+
+function dishWords(name: string): string[] {
+  return (name.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter((w) => !DISH_STOPWORDS.has(w) && w !== "and");
+}
+
+function singular(w: string): string {
+  return w.length > 3 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w;
+}
+
+function editDistanceAtMostOne(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0;
+  let j = 0;
+  let edits = 0;
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) {
+      i++;
+      j++;
+      continue;
+    }
+    if (++edits > 1) return false;
+    if (a.length > b.length) i++;
+    else if (b.length > a.length) j++;
+    else {
+      i++;
+      j++;
+    }
+  }
+  return edits + (a.length - i) + (b.length - j) <= 1;
+}
+
+function wordsMatch(spoken: string, dish: string): boolean {
+  if (spoken === dish || singular(spoken) === singular(dish)) return true;
+  return Math.min(spoken.length, dish.length) >= 5 && editDistanceAtMostOne(spoken, dish);
+}
+
+interface SpokenToken {
+  word: string;
+  start: number;
+  end: number;
+  kind: "word" | "stop" | "conj" | "break";
+}
+
+function spokenTokens(text: string): SpokenToken[] {
+  const out: SpokenToken[] = [];
+  const re = /[A-Za-z0-9]+|[,;.\n&]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const w = m[0].toLowerCase();
+    let kind: SpokenToken["kind"] = "word";
+    if (/^[,;.\n]$/.test(w) || w === "plus" || w === "also") kind = "break";
+    else if (w === "and" || w === "&") kind = "conj";
+    else if (DISH_STOPWORDS.has(w)) kind = "stop";
+    out.push({ word: w, start: m.index, end: m.index + m[0].length, kind });
+  }
+  return out;
+}
+
+function phraseKey(s: string): string {
+  return (s.toLowerCase().match(/[a-z0-9]+/g) ?? []).map(singular).join(" ");
+}
+
+interface Candidate {
+  item: MenuItem;
+  first: number; // token index
+  last: number;
+  run: number;
+  coverage: number;
+  preferred: boolean;
+}
+
+export function matchDishNames(
+  text: string,
+  index: MenuIndex,
+  preferIds: readonly string[] = [],
+  knownItems: ReadonlySet<string> = new Set(),
+): DishNameResult {
+  // A phrase that IS a grocery item ("pork chops") stays an item.
+  const known = new Set([...knownItems].map((n) => phraseKey(n)));
+  const toks = spokenTokens(text);
+  const prefer = new Set(preferIds);
+  const candidates: Candidate[] = [];
+  for (const item of index.byId.values()) {
+    const dw = dishWords(item.dish);
+    if (dw.length < 2) continue;
+    const allowsConj = /&|\band\b/i.test(item.dish);
+    for (let s = 0; s < toks.length; s++) {
+      if (toks[s].kind !== "word") continue;
+      const used = new Set<number>();
+      let run = 0;
+      let last = s;
+      for (let k = s; k < toks.length; k++) {
+        const tk = toks[k];
+        if (tk.kind === "break") break;
+        if (tk.kind === "conj" && !allowsConj) break;
+        if (tk.kind !== "word") continue;
+        const hit = dw.findIndex((d, di) => !used.has(di) && wordsMatch(tk.word, d));
+        if (hit < 0) break;
+        used.add(hit);
+        run++;
+        last = k;
+      }
+      const coverage = run / dw.length;
+      if (run >= 2 && coverage >= MIN_DISH_COVERAGE && !known.has(phraseKey(text.slice(toks[s].start, toks[last].end)))) {
+        candidates.push({ item, first: s, last, run, coverage, preferred: prefer.has(item.id) });
+      }
+    }
+  }
+  candidates.sort(
+    (a, b) =>
+      b.run - a.run ||
+      Number(b.preferred) - Number(a.preferred) ||
+      b.coverage - a.coverage ||
+      a.first - b.first,
+  );
+  const taken = new Set<number>();
+  const chosen: Candidate[] = [];
+  const chosenIds = new Set<string>();
+  for (const c of candidates) {
+    let free = true;
+    for (let k = c.first; k <= c.last; k++) if (taken.has(k)) free = false;
+    if (!free || chosenIds.has(c.item.id)) continue;
+    for (let k = c.first; k <= c.last; k++) taken.add(k);
+    chosen.push(c);
+    chosenIds.add(c.item.id);
+  }
+  chosen.sort((a, b) => a.first - b.first);
+  let rest = "";
+  let pos = 0;
+  const matches: DishMatch[] = [];
+  for (const c of chosen) {
+    const from = toks[c.first].start;
+    const to = toks[c.last].end;
+    matches.push({ phrase: text.slice(from, to), id: c.item.id, dish: c.item.dish });
+    rest += text.slice(pos, from) + " ";
+    pos = to;
+  }
+  rest += text.slice(pos);
+  rest = rest
+    .replace(/\s+/g, " ")
+    .replace(/\s+([,;.])/g, "$1")
+    .replace(/([,;])\s*(?:(?:and|plus)\s*)?(?=[,;]|$)/gi, "")
+    .replace(/^\s*(?:[,;.]|and|plus|also)\s*/i, "")
+    .replace(/\s*(?:[,;]|\band|\bplus)\s*$/i, "")
+    .trim();
+  return { matches, rest };
+}
+
 export interface ExpansionResult {
   ingredients: Ingredient[];
   found: MenuItem[];
