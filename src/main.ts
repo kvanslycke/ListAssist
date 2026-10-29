@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile, TFolder, normalizePath } from "obsidian";
+import { Notice, Plugin, TFile, TFolder, normalizePath, requestUrl } from "obsidian";
 import { TemplatePickerModal } from "./template-picker";
 import { CreateNoteModal } from "./create-note-modal";
 import {
@@ -120,6 +120,13 @@ export default class ListAssistantPlugin extends Plugin {
       }
     });
 
+    this.app.workspace.onLayoutReady(() => {
+      const autoRunTimer = window.setTimeout(() => {
+        this.autoRun().catch((err) => console.error("List Assistant auto-run:", err));
+      }, 5 * 60 * 1000);
+      this.register(() => window.clearTimeout(autoRunTimer));
+    });
+
     this.addSettingTab(new ListAssistantSettingTab(this.app, this));
   }
 
@@ -135,6 +142,65 @@ export default class ListAssistantPlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
+  }
+
+  // Boot auto-run for the Faraday Report (Kevin 2026-10-26): triage + Family House calendar sync 5 min after
+  // Obsidian loads, without opening any note; writes autorun-status.json for SentinelHQ\bin\boot_run.py.
+  async autoRun(): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    const statusPath = (this.manifest.dir || ".obsidian/plugins/list-assistant") + "/autorun-status.json";
+    const status: { last_run: string; triage: Record<string, unknown>; calendar: Record<string, unknown> } = {
+      last_run: new Date().toISOString(),
+      triage: {},
+      calendar: {},
+    };
+    try {
+      const r = await runTriage(this.app, {
+        excludeFolders: this.settings.triageExcludeFolders,
+        targetFolder: this.settings.dailyPrioritiesFolder,
+      });
+      const c = r.report.buckets;
+      status.triage = { ok: true, q1: c.q1.length, q2: c.q2.length, q3: c.q3.length, q4: c.q4.length, needs: r.report.untriaged.length };
+    } catch (e) {
+      status.triage = { ok: false, message: String(e).slice(0, 200) };
+    }
+    let online = false;
+    try {
+      const resp = await requestUrl({ url: "https://www.google.com/generate_204", throw: false });
+      online = resp.status === 204;
+    } catch (e) {
+      online = false;
+    }
+    if (!online) {
+      status.calendar = { status: "skipped-offline" };
+    } else if (!this.settings.googleTokens || !this.settings.googleClientId || !this.settings.googleClientSecret) {
+      status.calendar = { status: "not-connected", message: "connect Google Calendar in List Assistant settings" };
+    } else {
+      try {
+        const client = this.buildClient(this.settings.googleTokens);
+        if (!client) throw new Error("could not build calendar client");
+        const s = await syncCalendar(this.app, client, {
+          q1StartHour: this.settings.q1StartHour,
+          q1StartMinute: this.settings.q1StartMinute,
+          q1EndHour: this.settings.q1EndHour,
+          q1EndMinute: this.settings.q1EndMinute,
+          q2ReminderDays: this.settings.q2ReminderDays,
+          rapidsTemplatePath: this.settings.rapidsTemplatePath,
+          excludeFolders: this.settings.triageExcludeFolders,
+        });
+        for (const e of s.errors) console.error("List Assistant auto-run calendar sync:", e);
+        status.calendar = { status: "ok", created: s.created, updated: s.updated, deleted: s.deleted, errors: s.errors.length };
+      } catch (e) {
+        if (e instanceof InvalidGrantError) {
+          this.settings.googleTokens = null;
+          await this.saveSettings();
+          status.calendar = { status: "needs-reconnect", message: "Google refresh token no longer valid; press Connect in List Assistant settings" };
+        } else {
+          status.calendar = { status: "error", message: String(e).slice(0, 200) };
+        }
+      }
+    }
+    await adapter.write(statusPath, JSON.stringify(status, null, 1));
   }
 
   async runTriage(): Promise<void> {
